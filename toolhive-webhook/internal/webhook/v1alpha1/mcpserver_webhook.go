@@ -36,7 +36,8 @@ import (
 var mcpserverlog = logf.Log.WithName("mcpserver-resource")
 
 const (
-	InitContainerName = "kagenti-client-registration"
+	CLIENT_REGISTRATION_NAME = "kagenti-client-registration"
+	SPIFFY_HELPER_NAME       = "spiffe-helper"
 )
 
 // SetupMCPServerWebhookWithManager registers the webhook for MCPServer in the manager.
@@ -79,29 +80,23 @@ func (d *MCPServerCustomDefaulter) Default(ctx context.Context, obj runtime.Obje
 		}
 	}
 	if d.EnableClientRegistration {
-		// Check if the kagenti-client-registration initContainer already exists
-		containerExists := false
-		for _, container := range mcpserver.Spec.PodTemplateSpec.Spec.InitContainers {
-			if container.Name == InitContainerName {
-				containerExists = true
-				mcpserverlog.Info("kagenti-client-registration initContainer already exists, skipping injection", "name", mcpserver.GetName())
-				break
+		// Check if the kagenti-client-registration Container already exists
+		if exists := d.containerExists(mcpserver, CLIENT_REGISTRATION_NAME); !exists {
+			if err := d.injectClientRegistrationContainer(mcpserver); err != nil {
+				return fmt.Errorf("failed to inject client-registration container: %w", err)
 			}
 		}
 
-		if !containerExists {
-			if err := d.injectInitContainer(mcpserver); err != nil {
-				return fmt.Errorf("failed to inject initContainer: %w", err)
+		// Check if the spiffy-helper Container already exists
+		if exists := d.containerExists(mcpserver, SPIFFY_HELPER_NAME); !exists {
+			if err := d.injectSpiffyHelperContainer(mcpserver); err != nil {
+				return fmt.Errorf("failed to inject spiffy-helper container: %w", err)
 			}
 		}
-		volumeExists := false
-		for _, vol := range mcpserver.Spec.PodTemplateSpec.Spec.Volumes {
-			if vol.Name == "shared-data" {
-				volumeExists = true
-				break
-			}
-		}
-		if !volumeExists {
+
+		// Check Volumes
+
+		if exists := d.volumeExists(mcpserver, "shared-data"); !exists {
 			mcpserver.Spec.PodTemplateSpec.Spec.Volumes = append(mcpserver.Spec.PodTemplateSpec.Spec.Volumes, corev1.Volume{
 				Name: "shared-data",
 				VolumeSource: corev1.VolumeSource{
@@ -110,12 +105,66 @@ func (d *MCPServerCustomDefaulter) Default(ctx context.Context, obj runtime.Obje
 			})
 		}
 
+		if exists := d.volumeExists(mcpserver, "spire-agent-socket"); !exists {
+			mcpserver.Spec.PodTemplateSpec.Spec.Volumes = append(mcpserver.Spec.PodTemplateSpec.Spec.Volumes, corev1.Volume{
+				Name: "spire-agent-socket",
+				VolumeSource: corev1.VolumeSource{
+					HostPath: &corev1.HostPathVolumeSource{
+						Path: "/run/spire/agent-sockets",
+					},
+				},
+			})
+		}
+
+		if exists := d.volumeExists(mcpserver, "spiffe-helper-config"); !exists {
+			mcpserver.Spec.PodTemplateSpec.Spec.Volumes = append(mcpserver.Spec.PodTemplateSpec.Spec.Volumes, corev1.Volume{
+				Name: "spiffe-helper-config",
+				VolumeSource: corev1.VolumeSource{
+					ConfigMap: &corev1.ConfigMapVolumeSource{
+						LocalObjectReference: corev1.LocalObjectReference{
+							Name: "spiffe-helper-config",
+						},
+					},
+				},
+			})
+		}
+
+		if exists := d.volumeExists(mcpserver, "svid-output"); !exists {
+			mcpserver.Spec.PodTemplateSpec.Spec.Volumes = append(mcpserver.Spec.PodTemplateSpec.Spec.Volumes, corev1.Volume{
+				Name: "svid-output",
+				VolumeSource: corev1.VolumeSource{
+					EmptyDir: &corev1.EmptyDirVolumeSource{},
+				},
+			})
+		}
 	}
 	return nil
 }
+func (d *MCPServerCustomDefaulter) containerExists(mcpserver *toolhivestacklokdevv1alpha1.MCPServer, containerName string) bool {
+	for _, container := range mcpserver.Spec.PodTemplateSpec.Spec.Containers {
+		if container.Name == containerName {
+			return true
+		}
+	}
 
-func (d *MCPServerCustomDefaulter) injectInitContainer(mcpserver *toolhivestacklokdevv1alpha1.MCPServer) error {
-	initContainers := []corev1.Container{}
+	return false
+}
+func (d *MCPServerCustomDefaulter) volumeExists(mcpserver *toolhivestacklokdevv1alpha1.MCPServer, volumeName string) bool {
+
+	for _, vol := range mcpserver.Spec.PodTemplateSpec.Spec.Volumes {
+		if vol.Name == volumeName {
+			return true
+		}
+	}
+	return false
+}
+func (d *MCPServerCustomDefaulter) injectClientRegistrationContainer(mcpserver *toolhivestacklokdevv1alpha1.MCPServer) error {
+
+	containers := mcpserver.Spec.PodTemplateSpec.Spec.Containers
+	if len(containers) == 0 {
+		return fmt.Errorf("no containers found in MCPServer spec")
+	}
+
 	imagePullPolicy := "IfNotPresent"
 	resources := corev1.ResourceRequirements{
 		Limits: corev1.ResourceList{
@@ -127,12 +176,19 @@ func (d *MCPServerCustomDefaulter) injectInitContainer(mcpserver *toolhivestackl
 			corev1.ResourceMemory: resource.MustParse("64Mi"),
 		},
 	}
-
-	initContainers = append(initContainers, corev1.Container{
-		Name:            InitContainerName,
+	clientId := mcpserver.Namespace + "/" + mcpserver.Name
+	containers = append(containers, corev1.Container{
+		Name:            CLIENT_REGISTRATION_NAME,
 		Image:           "ghcr.io/kagenti/kagenti/client-registration:latest",
 		ImagePullPolicy: corev1.PullPolicy(imagePullPolicy),
 		Resources:       resources,
+		// Wait until /opt/jwt_svid.token appears, then exec
+		Command: []string{
+			"/bin/sh",
+			"-c",
+			// TODO: tail -f /dev/null allows the container to stay alive. Change this to be a job.
+			"while [ ! -f /opt/jwt_svid.token ]; do echo waiting for SVID; sleep 1; done; python client_registration.py; tail -f /dev/null",
+		},
 		Env: []corev1.EnvVar{
 			{
 				Name: "KEYCLOAK_URL",
@@ -181,7 +237,7 @@ func (d *MCPServerCustomDefaulter) injectInitContainer(mcpserver *toolhivestackl
 			},
 			{
 				Name:  "CLIENT_NAME",
-				Value: mcpserver.Name,
+				Value: clientId,
 			},
 			{
 				Name:  "CLIENT_ID",
@@ -194,14 +250,65 @@ func (d *MCPServerCustomDefaulter) injectInitContainer(mcpserver *toolhivestackl
 		},
 		VolumeMounts: []corev1.VolumeMount{
 			{
-				Name:      "shared-data",
-				MountPath: "/shared",
+				// This is how client registration accesses the SVID
+				Name:      "svid-output",
+				MountPath: "/opt",
 			},
 		},
 	})
+	mcpserver.Spec.PodTemplateSpec.Spec.Containers = containers
+	return nil
+}
+func (d *MCPServerCustomDefaulter) injectSpiffyHelperContainer(mcpserver *toolhivestacklokdevv1alpha1.MCPServer) error {
 
-	mcpserver.Spec.PodTemplateSpec.Spec.InitContainers =
-		append(mcpserver.Spec.PodTemplateSpec.Spec.InitContainers, initContainers...)
+	containers := mcpserver.Spec.PodTemplateSpec.Spec.Containers
+	if len(containers) == 0 {
+		return fmt.Errorf("no containers found in MCPServer spec")
+	}
+
+	imagePullPolicy := "IfNotPresent"
+	resources := corev1.ResourceRequirements{
+		Limits: corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse("100m"),
+			corev1.ResourceMemory: resource.MustParse("128Mi"),
+		},
+		Requests: corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse("50m"),
+			corev1.ResourceMemory: resource.MustParse("64Mi"),
+		},
+	}
+
+	containers = append(containers, corev1.Container{
+		Name:            SPIFFY_HELPER_NAME,
+		Image:           "ghcr.io/spiffe/spiffe-helper:nightly",
+		ImagePullPolicy: corev1.PullPolicy(imagePullPolicy),
+		Resources:       resources,
+		// Wait until /opt/jwt_svid.token appears, then exec
+		Command: []string{
+			"/spiffe-helper",
+			"-config=/etc/spiffe-helper/helper.conf",
+			"run",
+		},
+
+		VolumeMounts: []corev1.VolumeMount{
+			{
+				// This is how client registration accesses the SVID
+				Name:      "spiffe-helper-config",
+				MountPath: "/etc/spiffe-helper",
+			},
+			{
+				// This is how client registration accesses the SVID
+				Name:      "spire-agent-socket",
+				MountPath: "/spiffe-workload-api",
+			},
+			{
+				// This is how client registration accesses the SVID
+				Name:      "svid-output",
+				MountPath: "/opt",
+			},
+		},
+	})
+	mcpserver.Spec.PodTemplateSpec.Spec.Containers = containers
 	return nil
 }
 
