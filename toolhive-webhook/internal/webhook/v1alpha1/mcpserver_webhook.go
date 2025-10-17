@@ -50,8 +50,6 @@ func SetupMCPServerWebhookWithManager(mgr ctrl.Manager, registerClient bool) err
 		Complete()
 }
 
-// TODO(user): EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-
 // +kubebuilder:webhook:path=/mutate-toolhive-stacklok-dev-v1alpha1-mcpserver,mutating=true,failurePolicy=fail,sideEffects=None,groups=toolhive.stacklok.dev,resources=mcpservers,verbs=create;update,versions=v1alpha1,name=mmcpserver-v1alpha1.kb.io,admissionReviewVersions=v1
 
 // MCPServerCustomDefaulter struct is responsible for setting default values on the custom resource of the
@@ -238,10 +236,6 @@ func (d *MCPServerCustomDefaulter) injectClientRegistrationContainer(mcpserver *
 			{
 				Name:  "CLIENT_NAME",
 				Value: clientId,
-			},
-			{
-				Name:  "CLIENT_ID",
-				Value: "spiffe://localtest.me/sa/" + mcpserver.Name,
 			},
 			{
 				Name:  "NAMESPACE",

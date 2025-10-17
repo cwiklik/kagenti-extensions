@@ -1,0 +1,63 @@
+name: goreleaser
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  REPO: kagenti/kagenti-extensions
+  CHARTS_PATH: ./charts
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: v1.23
+
+      - name: Delete non-semver tags
+        run: 'git tag -d $(git tag -l | grep -v "^v") '
+
+      - name: Run GoReleaser on tag
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: latest
+          args: release --timeout 60m --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          USER: ${{ github.actor }}
+          EMAIL: ${{ github.actor }}@users.noreply.github.com
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Login to registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Package and push toolhive webhook chart
+        run: |
+          chartVersion=$(echo ${{ github.ref_name }} | cut -c 2-)
+          chartPackageName="toolhive-webhook-chart-${chartVersion}.tgz"
+          cd ${{ env.CHARTS_PATH }}/toolhive-webhook
+          sed -i "s/__PLACEHOLDER__/${chartVersion}/g" values.yaml
+          helm package . --destination . --version ${chartVersion} --app-version ${chartVersion}
+          helm push "./${chartPackageName}" oci://${{ env.REGISTRY }}/${{ env.REPO }}

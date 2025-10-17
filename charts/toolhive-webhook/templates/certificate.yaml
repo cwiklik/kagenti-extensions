@@ -1,0 +1,17 @@
+{{- if .Values.certManager.enabled }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "toolhive-webhook.fullname" . }}-serving-cert
+  namespace: {{ include "toolhive-webhook.namespace" . }}
+  labels:
+    {{- include "toolhive-webhook.labels" . | nindent 4 }}
+spec:
+  dnsNames:
+  - {{ include "toolhive-webhook.fullname" . }}-webhook-service.{{ include "toolhive-webhook.namespace" . }}.svc
+  - {{ include "toolhive-webhook.fullname" . }}-webhook-service.{{ include "toolhive-webhook.namespace" . }}.svc.cluster.local
+  issuerRef:
+    kind: Issuer
+    name: {{ .Values.certManager.issuer.name }}
+  secretName: {{ include "toolhive-webhook.fullname" . }}-webhook-server-cert
+{{- end }}

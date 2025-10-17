@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "toolhive-webhook.fullname" . }}-webhook-service
+  namespace: {{ include "toolhive-webhook.namespace" . }}
+  labels:
+    {{- include "toolhive-webhook.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+  - port: {{ .Values.service.port }}
+    targetPort: {{ .Values.service.targetPort }}
+    protocol: TCP
+    name: webhook
+  selector:
+    {{- include "toolhive-webhook.selectorLabels" . | nindent 4 }}
+    control-plane: controller-manager

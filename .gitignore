@@ -1,0 +1,47 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+cover.out
+
+# Go workspace file
+go.work
+go.work.sum
+
+# Build artifacts
+toolhive-webhook/bin/
+toolhive-webhook/dist/
+dist/
+
+# Kubernetes generated files
+toolhive-webhook/config/crd/bases/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.bak
+*.orig
+
+# Helm
+*.tgz
+
+# Ko
+.ko/

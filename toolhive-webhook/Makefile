@@ -1,6 +1,16 @@
 # Image URL to use all building/pushing image targets
 IMG ?= controller:latest
 
+# ko build variables for local development
+KO_DOCKER_REPO ?= ko.local
+CMD_NAME ?= toolhive-webhook
+IMAGE_TAG ?= $(shell git rev-parse --short HEAD)
+ARCH ?= $(shell go env GOARCH)
+CLUSTER ?= agent-platform
+CONTEXT ?=
+NAMESPACE ?= kagenti-system
+HELM_OPTS ?= --set image.repository=$(KO_DOCKER_REPO)/$(CMD_NAME) --set image.tag=$(IMAGE_TAG) --set image.pullPolicy=IfNotPresent --set namespaceOverride=$(NAMESPACE) --set namespace.create=false --set image.command=/ko-app/cmd
+
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
 GOBIN=$(shell go env GOPATH)/bin
@@ -156,6 +166,31 @@ deploy: manifests kustomize ## Deploy controller to the K8s cluster specified in
 .PHONY: undeploy
 undeploy: kustomize ## Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
 	$(KUSTOMIZE) build config/default | $(KUBECTL) delete --ignore-not-found=$(ignore-not-found) -f -
+
+.PHONY: ko-local-build
+ko-local-build:
+	KO_DOCKER_REPO=${KO_DOCKER_REPO}/${CMD_NAME} ko build -B ./cmd -t ${IMAGE_TAG} --platform linux/${ARCH}
+	docker tag ${KO_DOCKER_REPO}/${CMD_NAME}/cmd:${IMAGE_TAG} ${KO_DOCKER_REPO}/${CMD_NAME}:${IMAGE_TAG}
+
+# this is used for local testing
+.PHONY: kind-load-image
+kind-load-image:
+	kind load docker-image ${KO_DOCKER_REPO}/${CMD_NAME}:${IMAGE_TAG} --name ${CLUSTER}
+
+.PHONY: install-local-chart
+install-local-chart: kind-load-image
+	if [ ! -n "$(CONTEXT)" ] ; then helm upgrade --install --create-namespace -n $(NAMESPACE) toolhive-webhook ../charts/toolhive-webhook ${HELM_OPTS} ; else helm --kube-context ${CONTEXT} upgrade --install --create-namespace -n $(NAMESPACE) toolhive-webhook ../charts/toolhive-webhook ${HELM_OPTS} ; fi
+
+.PHONY: uninstall-local-chart
+uninstall-local-chart: ## Uninstall the local Helm chart
+	if [ ! -n "$(CONTEXT)" ] ; then helm uninstall toolhive-webhook -n $(NAMESPACE) ; else helm --kube-context ${CONTEXT} uninstall toolhive-webhook -n $(NAMESPACE) ; fi
+
+.PHONY: reinstall-local-chart
+reinstall-local-chart: uninstall-local-chart install-local-chart ## Uninstall and reinstall the local Helm chart
+
+.PHONY: local-dev
+local-dev: ko-local-build install-local-chart ## Build with ko and deploy to local Kind cluster
+
 
 ##@ Dependencies
 

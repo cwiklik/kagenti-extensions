@@ -1,0 +1,42 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-added-large-files
+        args: ['--maxkb=1024']
+        exclude: ^toolhive-webhook/bin/
+      - id: check-yaml
+        # Exclude Helm templates as they contain Go template syntax
+        exclude: ^charts/.*/templates/.*\.yaml$
+      - id: check-json
+      - id: check-merge-conflict
+      - id: mixed-line-ending
+
+  - repo: https://github.com/gruntwork-io/pre-commit
+    rev: v0.1.23
+    hooks:
+      - id: helmlint
+        files: ^charts/
+
+  - repo: local
+    hooks:
+      - id: go-fmt
+        name: go-fmt
+        entry: bash -c 'cd toolhive-webhook && go fmt ./...'
+        language: system
+        files: ^toolhive-webhook/.*\.go$
+        pass_filenames: false
+      - id: go-vet
+        name: go-vet
+        entry: bash -c 'cd toolhive-webhook && go vet ./...'
+        language: system
+        files: ^toolhive-webhook/.*\.go$
+        pass_filenames: false
+      - id: go-mod-tidy
+        name: go-mod-tidy
+        entry: bash -c 'cd toolhive-webhook && go mod tidy'
+        language: system
+        files: ^toolhive-webhook/(go\.mod|go\.sum)$
+        pass_filenames: false

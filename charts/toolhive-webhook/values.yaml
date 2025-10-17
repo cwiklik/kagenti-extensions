@@ -1,0 +1,97 @@
+# Default values for toolhive-webhook.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+# This will set the replicaset count more information can be found here: https://kubernetes.io/docs/concepts/workloads/controllers/replicaset/
+replicaCount: 1
+
+
+image:
+  repository: ghcr.io/kagenti/kagenti-extensions/toolhive-webhook
+  pullPolicy: IfNotPresent
+  tag: "__PLACEHOLDER__"
+  # Set to /ko-app/cmd for ko-built images, /manager for docker-built images
+  command: /manager
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+namespaceOverride: ""
+
+namespace:
+  create: true
+
+webhook:
+  enabled: true
+  enableClientRegistration: true
+  certPath: /tmp/k8s-webhook-server/serving-certs
+  certName: tls.crt
+  certKey: tls.key
+  port: 9443
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations:
+  kubectl.kubernetes.io/default-container: manager
+
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+    - "ALL"
+
+service:
+  type: ClusterIP
+  port: 443
+  targetPort: 9443
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 128Mi
+  requests:
+    cpu: 10m
+    memory: 64Mi
+
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: 8081
+  initialDelaySeconds: 15
+  periodSeconds: 20
+
+readinessProbe:
+  httpGet:
+    path: /readyz
+    port: 8081
+  initialDelaySeconds: 5
+  periodSeconds: 10
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+metrics:
+  enabled: true
+  port: 8443
+  secure: true
+
+leaderElection:
+  enabled: false
+
+certManager:
+  enabled: true
+  issuer:
+    create: false
+    name: selfsigned-issuer
+
+rbac:
+  create: true
