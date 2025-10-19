@@ -4,17 +4,19 @@ A Kubernetes admission webhook for [ToolHive](https://github.com/stacklok/toolhi
 
 ## Overview
 
-This webhook provides zero-configuration security for MCPServer resources by automatically injecting two sidecar containers that handle identity and authentication:
+This webhook provides security for MCPServer resources by automatically injecting two sidecar containers that handle identity and authentication:
 
 1. **`spiffe-helper`** - Obtains SPIFFE Verifiable Identity Documents (SVIDs) from the SPIRE agent via the Workload API
 2. **`kagenti-client-registration`** - Registers the MCPServer as an OAuth2 client in Keycloak using the SPIFFE identity
 
-When an MCPServer resource is created or updated, the webhook automatically:
+### Why Sidecar Injection?
 
-- Injects both sidecar containers into the pod specification
-- Mounts necessary volumes for SPIRE agent communication and credential sharing
-- Configures environment variables for Keycloak integration
-- Ensures proper container orchestration (SPIFFE helper runs first, then client registration waits for tokens)
+The sidecar approach is necessary because the ToolHive proxy is not currently designed to be easily extensible. Implementing Kagenti's authentication and authorization requirements would require modifications to the ToolHive proxy codebase to add middleware plugin support. By using sidecar containers injected via this webhook, we achieve:
+
+- **Non-invasive Integration** - No modifications to ToolHive proxy code required
+- **Independent Updates** - Kagenti security components can be updated without rebuilding ToolHive
+- **Flexibility** - Easy to add, remove, or modify security features without touching MCPServer implementations
+
 
 ## Architecture
 
