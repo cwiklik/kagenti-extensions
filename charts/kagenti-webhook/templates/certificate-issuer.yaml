@@ -1,0 +1,13 @@
+{{- if .Values.certManager.enabled }}
+{{- if .Values.certManager.issuer.create }}
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ .Values.certManager.issuer.name }}
+  namespace: {{ include "kagenti-webhook.namespace" . }}
+  labels:
+    {{- include "kagenti-webhook.labels" . | nindent 4 }}
+spec:
+  selfSigned: {}
+{{- end }}
+{{- end }}

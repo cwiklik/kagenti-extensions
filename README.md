@@ -4,4 +4,4 @@ This repository contains extension projects for the Kagenti ecosystem
 
 ## Projects
 
-[toolhive-webhook](./toolhive-webhook/) - Admission webhook for Toolhive MCPServer resources
+[kagenti-webhook](./kagenti-webhook/) - Admission webhook for Kagent MCPServer and Agent resources

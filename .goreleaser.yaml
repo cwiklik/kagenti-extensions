@@ -1,0 +1,134 @@
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+    - go mod download
+
+builds:
+  - id: kagenti-webhook
+    main: ./kagenti-webhook/cmd/main.go
+    binary: manager
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+
+archives:
+  - id: kagenti-webhook
+    format: tar.gz
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
+    files:
+      - LICENSE*
+      - README*
+      - kagenti-webhook/README.md
+
+dockers:
+  - image_templates:
+      - "ghcr.io/kagenti/kagenti-extensions/kagenti-webhook:{{ .Tag }}-amd64"
+      - "ghcr.io/kagenti/kagenti-extensions/kagenti-webhook:v{{ .Major }}-amd64"
+      - "ghcr.io/kagenti/kagenti-extensions/kagenti-webhook:v{{ .Major }}.{{ .Minor }}-amd64"
+      - "ghcr.io/kagenti/kagenti-extensions/kagenti-webhook:latest-amd64"
+    use: buildx
+    dockerfile: kagenti-webhook/Dockerfile
+    build_flag_templates:
+      - "--platform=linux/amd64"
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+      - "--label=org.opencontainers.image.source={{.GitURL}}"
+    extra_files:
+      - kagenti-webhook/go.mod
+      - kagenti-webhook/go.sum
+      - kagenti-webhook/cmd
+      - kagenti-webhook/internal
+
+  - image_templates:
+      - "ghcr.io/kagenti/kagenti-extensions/kagenti-webhook:{{ .Tag }}-arm64"
+      - "ghcr.io/kagenti/kagenti-extensions/kagenti-webhook:v{{ .Major }}-arm64"
+      - "ghcr.io/kagenti/kagenti-extensions/kagenti-webhook:v{{ .Major }}.{{ .Minor }}-arm64"
+      - "ghcr.io/kagenti/kagenti-extensions/kagenti-webhook:latest-arm64"
+    use: buildx
+    goarch: arm64
+    dockerfile: kagenti-webhook/Dockerfile
+    build_flag_templates:
+      - "--platform=linux/arm64"
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+      - "--label=org.opencontainers.image.source={{.GitURL}}"
+    extra_files:
+      - kagenti-webhook/go.mod
+      - kagenti-webhook/go.sum
+      - kagenti-webhook/cmd
+      - kagenti-webhook/internal
+
+docker_manifests:
+  - name_template: "ghcr.io/kagenti/kagenti-webhook:{{ .Tag }}"
+    image_templates:
+      - "ghcr.io/kagenti/kagenti-extensions/kagenti-webhook:{{ .Tag }}-amd64"
+      - "ghcr.io/kagenti/kagenti-extensions/kagenti-webhook:{{ .Tag }}-arm64"
+
+  - name_template: "ghcr.io/kagenti/kagenti-webhook:v{{ .Major }}"
+    image_templates:
+      - "ghcr.io/kagenti/kagenti-extensions/kagenti-webhook:v{{ .Major }}-amd64"
+      - "ghcr.io/kagenti/kagenti-extensions/kagenti-webhook:v{{ .Major }}-arm64"
+
+  - name_template: "ghcr.io/kagenti/kagenti-webhook:v{{ .Major }}.{{ .Minor }}"
+    image_templates:
+      - "ghcr.io/kagenti/kagenti-extensions/kagenti-webhook:v{{ .Major }}.{{ .Minor }}-amd64"
+      - "ghcr.io/kagenti/kagenti-extensions/kagenti-webhook:v{{ .Major }}.{{ .Minor }}-arm64"
+
+  - name_template: "ghcr.io/kagenti/kagenti-webhook:latest"
+    image_templates:
+      - "ghcr.io/kagenti/kagenti-extensions/kagenti-webhook:latest-amd64"
+      - "ghcr.io/kagenti/kagenti-extensions/kagenti-webhook:latest-arm64"
+
+checksum:
+  name_template: 'checksums.txt'
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+      - Merge pull request
+      - Merge branch
+
+release:
+  github:
+    owner: kagenti
+    name: kagenti-extensions
+  draft: false
+  prerelease: auto
+  mode: append
+  header: |
+    ## ToolHive Webhook Release {{ .Tag }}
+
+    ### What's New
+
+  footer: |
+    ---
+    **Full Changelog**: https://github.com/kagenti/kagenti-extensions/compare/{{ .PreviousTag }}...{{ .Tag }}

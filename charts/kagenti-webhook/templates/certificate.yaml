@@ -1,0 +1,17 @@
+{{- if .Values.certManager.enabled }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "kagenti-webhook.fullname" . }}-serving-cert
+  namespace: {{ include "kagenti-webhook.namespace" . }}
+  labels:
+    {{- include "kagenti-webhook.labels" . | nindent 4 }}
+spec:
+  dnsNames:
+  - {{ include "kagenti-webhook.fullname" . }}-webhook-service.{{ include "kagenti-webhook.namespace" . }}.svc
+  - {{ include "kagenti-webhook.fullname" . }}-webhook-service.{{ include "kagenti-webhook.namespace" . }}.svc.cluster.local
+  issuerRef:
+    kind: Issuer
+    name: {{ .Values.certManager.issuer.name }}
+  secretName: {{ include "kagenti-webhook.fullname" . }}-webhook-server-cert
+{{- end }}
