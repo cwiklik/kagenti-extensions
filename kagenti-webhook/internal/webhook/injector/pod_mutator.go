@@ -120,7 +120,7 @@ func (m *PodMutator) ShouldMutate(ctx context.Context, namespace string, crAnnot
 		mutatorLog.Info("Namespace-level injection enabled", "namespace", namespace)
 		return true, nil
 	}
-	return true, nil
+	return false, nil
 }
 
 func (m *PodMutator) InjectSidecars(podSpec *corev1.PodSpec, namespace, crName string) error {

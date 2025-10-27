@@ -141,6 +141,7 @@ For detailed architecture diagrams, see [`ARCHITECTURE.md`](../ARCHITECTURE.md).
 The webhook injects two sidecar containers into every Agent and MCPServer:
 
 #### 1. SPIFFE Helper (`spiffe-helper`)
+
 - **Image**: `ghcr.io/spiffe/spiffe-helper:nightly`
 - **Purpose**: Obtains and refreshes JWT-SVIDs from SPIRE
 - **Resources**: 50m CPU / 64Mi memory (request), 100m CPU / 128Mi memory (limit)
@@ -150,6 +151,7 @@ The webhook injects two sidecar containers into every Agent and MCPServer:
   - `/opt` - SVID token output
 
 #### 2. Client Registration (`kagenti-client-registration`)
+
 - **Image**: `ghcr.io/kagenti/kagenti/client-registration:latest`
 - **Purpose**: Registers resource as Keycloak OAuth2 client using SPIFFE identity
 - **Resources**: 50m CPU / 64Mi memory (request), 100m CPU / 128Mi memory (limit)
