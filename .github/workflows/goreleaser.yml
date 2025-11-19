@@ -26,7 +26,7 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: v1.23
+          go-version-file: kagenti-webhook/go.mod
 
       - name: Delete non-semver tags
         run: 'git tag -d $(git tag -l | grep -v "^v") '
