@@ -12,7 +12,7 @@ image:
   tag: "__PLACEHOLDER__"
   # Set to /ko-app/cmd for ko-built images, /manager for docker-built images
   # command: /manager
-  cmd: /ko-app/cmd
+
 
 imagePullSecrets: []
 nameOverride: ""
