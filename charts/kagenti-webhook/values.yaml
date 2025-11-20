@@ -5,18 +5,14 @@
 # This will set the replicaset count more information can be found here: https://kubernetes.io/docs/concepts/workloads/controllers/replicaset/
 replicaCount: 1
 
-
 image:
   repository: ghcr.io/kagenti/kagenti-extensions/kagenti-webhook
   pullPolicy: IfNotPresent
   tag: "__PLACEHOLDER__"
-  # Set to /ko-app/cmd for ko-built images, /manager for docker-built images
-  # command: /manager
-
 
 imagePullSecrets: []
 nameOverride: ""
-fullnameOverride: ""
+fullnameOverride: "kagenti-webhook"
 namespaceOverride: "kagenti-webhook-system"
 
 namespace:
