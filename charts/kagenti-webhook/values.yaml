@@ -7,7 +7,7 @@ replicaCount: 1
 
 
 image:
-  repository: ghcr.io/kagenti/kagenti-extensions/kagenti-webhook
+  repository: ghcr.io/kagenti/kagenti-extensions/kagenti-webhook-chart
   pullPolicy: IfNotPresent
   tag: "__PLACEHOLDER__"
   # Set to /ko-app/cmd for ko-built images, /manager for docker-built images
