@@ -174,10 +174,8 @@ func (d *MCPServerCustomDefaulter) buildHTTPRoute(mcpserver *toolhivestacklokdev
 	serviceName := fmt.Sprintf("mcp-%s-proxy", mcpserver.Name)
 	servicePort := gatewayv1.PortNumber(8000) // Default port
 
-	if mcpserver.Spec.PodTemplateSpec != nil {
-		if mcpserver.Spec.ProxyPort != 0 {
-			servicePort = gatewayv1.PortNumber(mcpserver.Spec.ProxyPort)
-		}
+	if mcpserver.Spec.ProxyPort != 0 {
+		servicePort = gatewayv1.PortNumber(mcpserver.Spec.ProxyPort)
 	}
 
 	return &gatewayv1.HTTPRoute{
