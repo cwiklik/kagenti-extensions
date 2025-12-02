@@ -74,7 +74,6 @@ func SetupMCPServerWebhookWithManager(mgr ctrl.Manager, mutator *injector.PodMut
 type MCPServerCustomDefaulter struct {
 	Mutator *injector.PodMutator
 	Client  client.Client
-	Decoder *admission.Decoder
 }
 
 var _ webhook.CustomDefaulter = &MCPServerCustomDefaulter{}
