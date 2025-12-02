@@ -28,6 +28,7 @@ import (
 
 	"github.com/kagenti/kagenti-extensions/kagenti-webhook/internal/webhook/injector"
 	webhooktoolhivestacklokdevv1alpha1 "github.com/kagenti/kagenti-extensions/kagenti-webhook/internal/webhook/v1alpha1"
+	mcpv1alpha1 "github.com/kagenti/mcp-gateway/pkg/apis/mcp/v1alpha1"
 	agentsv1alpha1 "github.com/kagenti/operator/api/v1alpha1"
 	toolhivestacklokdevv1alpha1 "github.com/stacklok/toolhive/cmd/thv-operator/api/v1alpha1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -41,6 +42,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+	//
 	// +kubebuilder:scaffold:imports
 )
 
@@ -51,7 +54,8 @@ var (
 
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
-
+	utilruntime.Must(mcpv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(gatewayv1.Install(scheme))
 	utilruntime.Must(toolhivestacklokdevv1alpha1.AddToScheme(scheme))
 	utilruntime.Must(agentsv1alpha1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme

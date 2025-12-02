@@ -6,7 +6,7 @@ KO_DOCKER_REPO ?= ko.local
 CMD_NAME ?= kagenti-webhook
 IMAGE_TAG ?= $(shell git rev-parse --short HEAD)
 ARCH ?= $(shell go env GOARCH)
-CLUSTER ?= agent-platform
+CLUSTER ?= kagenti
 CONTEXT ?=
 NAMESPACE ?= kagenti-webhook-system
 HELM_OPTS ?= --set image.repository=$(KO_DOCKER_REPO)/$(CMD_NAME) --set image.tag=$(IMAGE_TAG) --set image.pullPolicy=IfNotPresent --set namespaceOverride=$(NAMESPACE) --set namespace.create=false --set image.command=/ko-app/cmd
