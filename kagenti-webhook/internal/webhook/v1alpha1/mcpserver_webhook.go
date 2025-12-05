@@ -20,12 +20,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"time"
 
 	"github.com/kagenti/kagenti-extensions/kagenti-webhook/internal/webhook/injector"
 	mcpv1alpha1 "github.com/kagenti/mcp-gateway/pkg/apis/mcp/v1alpha1"
 	toolhivestacklokdevv1alpha1 "github.com/stacklok/toolhive/cmd/thv-operator/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -46,11 +49,24 @@ const (
 	ManagedByLabel = "toolhive.kagenti.com/managed"
 	// AutoGatewayAnnotation controls whether to auto-generate gateway CRs
 	AutoGatewayAnnotation = "toolhive.kagenti.com/auto-gateway"
-	// MCPGatewayNamespace is the namespace where the MCP gateway resides
-	MCPGatewayNamespace = "gateway-system"
-	// MCPGatewayName is the name of the MCP gateway
-	MCPGatewayName = "mcp-gateway"
 )
+
+var (
+	// MCPGatewayNamespace is the namespace where the MCP gateway resides.
+	// Can be overridden via MCP_GATEWAY_NAMESPACE environment variable.
+	MCPGatewayNamespace = getEnvOrDefault("MCP_GATEWAY_NAMESPACE", "gateway-system")
+
+	// MCPGatewayName is the name of the MCP gateway.
+	// Can be overridden via MCP_GATEWAY_NAME environment variable.
+	MCPGatewayName = getEnvOrDefault("MCP_GATEWAY_NAME", "mcp-gateway")
+)
+
+func getEnvOrDefault(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
+}
 
 // SetupMCPServerWebhookWithManager registers the webhook for MCPServer in the manager.
 func SetupMCPServerWebhookWithManager(mgr ctrl.Manager, mutator *injector.PodMutator) error {
@@ -86,6 +102,33 @@ func (d *MCPServerCustomDefaulter) Default(ctx context.Context, obj runtime.Obje
 		return fmt.Errorf("expected an MCPServer object but got %T", obj)
 	}
 	mcpserverlog.Info("Defaulting for MCPServer", "name", mcpserver.GetName())
+
+	// Handle deletion
+	if !mcpserver.DeletionTimestamp.IsZero() {
+		mcpserverlog.Info("MCPServer is being deleted, performing cleanup",
+			"name", mcpserver.GetName())
+
+		// Only do cleanup if our finalizer is present
+		if containsString(mcpserver.Finalizers, "toolhive.kagenti.com/gateway-cleanup") {
+			// Perform cleanup with timeout
+			cleanupCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+			defer cancel()
+
+			if err := d.cleanupGatewayResources(cleanupCtx, mcpserver); err != nil {
+				mcpserverlog.Error(err, "Failed to cleanup gateway resources",
+					"name", mcpserver.GetName())
+				// Don't remove finalizer if cleanup failed
+				return err
+			}
+
+			// Remove our finalizer after successful cleanup
+			mcpserver.Finalizers = removeString(mcpserver.Finalizers, "toolhive.kagenti.com/gateway-cleanup")
+			mcpserverlog.Info("Removed finalizer after successful cleanup",
+				"name", mcpserver.GetName())
+		}
+
+		return nil
+	}
 
 	// Decode PodTemplateSpec from RawExtension
 	var podTemplate *corev1.PodTemplateSpec
@@ -123,6 +166,9 @@ func (d *MCPServerCustomDefaulter) Default(ctx context.Context, obj runtime.Obje
 
 	// Generate MCP Gateway CRs if auto-gateway is enabled
 	if d.generateGatewayCRs(mcpserver) {
+		if !containsString(mcpserver.Finalizers, "toolhive.kagenti.com/gateway-cleanup") {
+			mcpserver.Finalizers = append(mcpserver.Finalizers, "toolhive.kagenti.com/gateway-cleanup")
+		}
 		if err := d.createGatewayCRs(ctx, mcpserver); err != nil {
 			mcpserverlog.Error(err, "Failed to create gateway CRs", "name", mcpserver.GetName())
 			return err
@@ -170,7 +216,7 @@ func (d *MCPServerCustomDefaulter) buildHTTPRoute(mcpserver *toolhivestacklokdev
 	pathValue := "/"
 	gatewayNamespace := gatewayv1.Namespace(MCPGatewayNamespace)
 
-	// Extract service info from MCPServer spec
+	// the toolhive MCPServer proxy service name consists of "mcp-" + mcpserver name + "-proxy"
 	serviceName := fmt.Sprintf("mcp-%s-proxy", mcpserver.Name)
 	servicePort := gatewayv1.PortNumber(8000) // Default port
 
@@ -183,15 +229,17 @@ func (d *MCPServerCustomDefaulter) buildHTTPRoute(mcpserver *toolhivestacklokdev
 			Name:      routeName,
 			Namespace: mcpserver.Namespace,
 			Labels: map[string]string{
-				"mcp-server":   "true",
-				ManagedByLabel: "true",
+				"mcp-server":                            "true",
+				ManagedByLabel:                          "true",
+				"toolhive.kagenti.com/parent-server":    mcpserver.Name,
+				"toolhive.kagenti.com/parent-namespace": mcpserver.Namespace,
 			},
 		},
 		Spec: gatewayv1.HTTPRouteSpec{
 			CommonRouteSpec: gatewayv1.CommonRouteSpec{
 				ParentRefs: []gatewayv1.ParentReference{
 					{
-						Name:      MCPGatewayName,
+						Name:      gatewayv1.ObjectName(MCPGatewayName),
 						Namespace: &gatewayNamespace,
 					},
 				},
@@ -239,7 +287,9 @@ func (d *MCPServerCustomDefaulter) buildGatewayMCPServer(mcpserver *toolhivestac
 			Name:      gatewayServerName,
 			Namespace: mcpserver.Namespace,
 			Labels: map[string]string{
-				ManagedByLabel: "true",
+				ManagedByLabel:                          "true",
+				"toolhive.kagenti.com/parent-server":    mcpserver.Name,
+				"toolhive.kagenti.com/parent-namespace": mcpserver.Namespace,
 			},
 		},
 		Spec: mcpv1alpha1.MCPServerSpec{
@@ -296,7 +346,12 @@ func (d *MCPServerCustomDefaulter) createOrUpdateResource(ctx context.Context, o
 			"kind", gvk.Kind,
 			"name", obj.GetName(),
 			"namespace", obj.GetNamespace())
-		return d.Client.Create(ctx, obj)
+		createErr := d.Client.Create(ctx, obj)
+		if errors.IsForbidden(createErr) {
+			return fmt.Errorf("RBAC: permission denied when creating resource %s/%s of kind %s. Please check the webhook's RBAC permissions: %w",
+				obj.GetNamespace(), obj.GetName(), gvk.Kind, createErr)
+		}
+		return createErr
 	} else if err != nil {
 		return fmt.Errorf("failed to get existing resource: %w", err)
 	}
@@ -308,7 +363,13 @@ func (d *MCPServerCustomDefaulter) createOrUpdateResource(ctx context.Context, o
 			"name", obj.GetName())
 		return nil
 	}
-
+	// Check if update is needed by comparing specs
+	if !needsUpdate(existingObj, obj) {
+		mcpserverlog.Info("Resource unchanged, skipping update",
+			"kind", gvk.Kind,
+			"name", obj.GetName())
+		return nil
+	}
 	// Update existing resource
 	mcpserverlog.Info("Updating resource",
 		"kind", gvk.Kind,
@@ -316,6 +377,120 @@ func (d *MCPServerCustomDefaulter) createOrUpdateResource(ctx context.Context, o
 		"namespace", obj.GetNamespace())
 	obj.SetResourceVersion(existingObj.GetResourceVersion())
 	return d.Client.Update(ctx, obj)
+}
+
+// needsUpdate compares two objects to determine if an update is necessary
+func needsUpdate(existing, desired client.Object) bool {
+	// Compare labels
+	existingLabels := existing.GetLabels()
+	desiredLabels := desired.GetLabels()
+	if !mapsEqual(existingLabels, desiredLabels) {
+		return true
+	}
+
+	// Compare annotations
+	existingAnnotations := existing.GetAnnotations()
+	desiredAnnotations := desired.GetAnnotations()
+	if !mapsEqual(existingAnnotations, desiredAnnotations) {
+		return true
+	}
+
+	// Type-specific spec comparison
+	switch e := existing.(type) {
+	case *gatewayv1.HTTPRoute:
+		d, ok := desired.(*gatewayv1.HTTPRoute)
+		if !ok {
+			return true
+		}
+		// Compare only the spec
+		eSpec, _ := json.Marshal(e.Spec)
+		dSpec, _ := json.Marshal(d.Spec)
+		return string(eSpec) != string(dSpec)
+
+	case *mcpv1alpha1.MCPServer:
+		d, ok := desired.(*mcpv1alpha1.MCPServer)
+		if !ok {
+			return true
+		}
+		// Compare only the spec
+		eSpec, _ := json.Marshal(e.Spec)
+		dSpec, _ := json.Marshal(d.Spec)
+		return string(eSpec) != string(dSpec)
+	}
+
+	// Fallback: assume update needed if type unknown
+	return true
+}
+
+// mapsEqual compares two string maps for equality
+func mapsEqual(a, b map[string]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if b[k] != v {
+			return false
+		}
+	}
+	return true
+}
+
+func containsString(slice []string, s string) bool {
+	for _, item := range slice {
+		if item == s {
+			return true
+		}
+	}
+	return false
+}
+
+func removeString(slice []string, s string) []string {
+	result := []string{}
+	for _, item := range slice {
+		if item != s {
+			result = append(result, item)
+		}
+	}
+	return result
+}
+
+// cleanupGatewayResources deletes the HTTPRoutes and Gateway MCPServers
+func (d *MCPServerCustomDefaulter) cleanupGatewayResources(ctx context.Context, mcpserver *toolhivestacklokdevv1alpha1.MCPServer) error {
+	// Clean up HTTPRoutes
+	httpRoutes := &gatewayv1.HTTPRouteList{}
+	if err := d.Client.List(ctx, httpRoutes,
+		client.MatchingLabels{
+			"toolhive.kagenti.com/parent-server":    mcpserver.Name,
+			"toolhive.kagenti.com/parent-namespace": mcpserver.Namespace,
+		}); err != nil {
+		return fmt.Errorf("failed to list HTTPRoutes: %w", err)
+	}
+
+	for i := range httpRoutes.Items {
+		if err := d.Client.Delete(ctx, &httpRoutes.Items[i]); err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("failed to delete HTTPRoute %s: %w", httpRoutes.Items[i].Name, err)
+		}
+		mcpserverlog.Info("Deleted HTTPRoute", "name", httpRoutes.Items[i].Name)
+	}
+
+	// Clean up Gateway MCPServers
+	gatewayServers := &mcpv1alpha1.MCPServerList{}
+	if err := d.Client.List(ctx, gatewayServers,
+		client.MatchingLabels{
+			"toolhive.kagenti.com/parent-server":    mcpserver.Name,
+			"toolhive.kagenti.com/parent-namespace": mcpserver.Namespace,
+		}); err != nil {
+		return fmt.Errorf("failed to list Gateway MCPServers: %w", err)
+	}
+
+	for i := range gatewayServers.Items {
+		if err := d.Client.Delete(ctx, &gatewayServers.Items[i]); err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("failed to delete Gateway MCPServer %s: %w", gatewayServers.Items[i].Name, err)
+		}
+		mcpserverlog.Info("Deleted Gateway MCPServer", "name", gatewayServers.Items[i].Name)
+	}
+
+	return nil
 }
 
 // TODO(user): change verbs to "verbs=create;update;delete" if you want to enable deletion validation.
@@ -329,7 +504,6 @@ func (d *MCPServerCustomDefaulter) createOrUpdateResource(ctx context.Context, o
 // NOTE: The +kubebuilder:object:generate=false marker prevents controller-gen from generating DeepCopy methods,
 // as this struct is used only for temporary operations and does not need to be deeply copied.
 type MCPServerCustomValidator struct {
-	Decoder *admission.Decoder
 	// TODO(user): Add more fields as needed for validation
 }
 

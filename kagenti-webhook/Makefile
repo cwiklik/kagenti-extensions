@@ -6,6 +6,10 @@ KO_DOCKER_REPO ?= ko.local
 CMD_NAME ?= kagenti-webhook
 IMAGE_TAG ?= $(shell git rev-parse --short HEAD)
 ARCH ?= $(shell go env GOARCH)
+# CLUSTER specifies the Kubernetes cluster name to use for deployment.
+# Default is "kagenti" .
+# If you need to deploy to a different cluster (e.g., in CI/CD or your local environment),
+# override this by running 'make CLUSTER=your-cluster-name ...' or by setting the CLUSTER environment variable.
 CLUSTER ?= kagenti
 CONTEXT ?=
 NAMESPACE ?= kagenti-webhook-system
