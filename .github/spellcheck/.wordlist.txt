@@ -381,3 +381,9 @@ stacklok
 JWT
 spiffe
 EmptyDir
+
+localtest
+ui
+keycloak
+localtest
+AuthProxy
