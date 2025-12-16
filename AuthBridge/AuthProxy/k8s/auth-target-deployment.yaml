@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-target
+  labels:
+    app: auth-target
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: auth-target
+  template:
+    metadata:
+      labels:
+        app: auth-target
+    spec:
+      containers:
+      - name: auth-target
+        image: localhost/auth-target:latest
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 8081
+        env:
+        - name: ISSUER
+          value: "http://keycloak.localtest.me:8080/realms/master"
+        - name: JWKS_URL
+          value: "http://keycloak.keycloak.svc.cluster.local:8080/realms/master/protocol/openid-connect/certs"
+        - name: AUDIENCE
+          value: "spiffe://localtest.me/ns/default/sa/slack-tool"
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "250m"
+          limits:
+            memory: "128Mi"
+            cpu: "500m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-target-service
+spec:
+  selector:
+    app: auth-target
+  ports:
+    - protocol: TCP
+      port: 8081
+      targetPort: 8081
+  type: ClusterIP

@@ -1,0 +1,31 @@
+FROM golang:1.23-alpine AS builder
+
+WORKDIR /app
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY go-processor/ ./go-processor/
+
+RUN CGO_ENABLED=0 GOOS=linux go build -o /go-processor ./go-processor
+
+# Use official Envoy image as base
+FROM envoyproxy/envoy:v1.28-latest
+
+# Install ca-certificates for TLS connections
+USER root
+RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+
+# Copy the go-processor binary from builder
+COPY --from=builder /go-processor /usr/local/bin/go-processor
+
+# Copy the entrypoint script
+COPY entrypoint-envoy.sh /usr/local/bin/entrypoint-envoy.sh
+RUN chmod +x /usr/local/bin/entrypoint-envoy.sh
+
+# Switch to envoy user (UID 1337 as per deployment)
+USER 1337
+
+EXPOSE 15123 9901 9090
+
+ENTRYPOINT ["/usr/local/bin/entrypoint-envoy.sh"]
