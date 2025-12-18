@@ -13,7 +13,10 @@ helm upgrade --install spire-crds spire-crds -n spire-mgmt --repo https://spiffe
 Use your custom Helm values file:
 
 ```bash
-helm upgrade --install spire spire -n spire-mgmt --repo https://spiffe.github.io/helm-charts-hardened/ -f "spire-helm-values.yaml" --wait 
+helm upgrade --install spire spire \
+  -n spire-mgmt \
+  --repo https://spiffe.github.io/helm-charts-hardened/ \
+  -f https://raw.githubusercontent.com/kagenti/kagenti/main/kagenti/installer/app/resources/spire-helm-values.yaml
 ```
 
 ### 3. Install Gateway API CRDs
@@ -25,13 +28,13 @@ kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/downloa
 ### 4. Create Keycloak Namespace
 
 ```bash
-kubectl apply -f "keycloak-namespace.yaml"
+kubectl apply -f "https://raw.githubusercontent.com/kagenti/kagenti/refs/heads/main/kagenti/installer/app/resources/keycloak-namespace.yaml"
 ```
 
 ### 5. Deploy Keycloak with Postgres
 
 ```bash
-kubectl apply -f "keycloak.yaml" -n keycloak
+kubectl apply -f "https://raw.githubusercontent.com/kagenti/kagenti/refs/heads/main/kagenti/installer/app/resources/keycloak.yaml" -n keycloak
 ```
 
 ### 6. Port Forward Keycloak
