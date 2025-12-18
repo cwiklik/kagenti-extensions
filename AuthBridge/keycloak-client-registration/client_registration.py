@@ -48,8 +48,8 @@ def write_client_secret(
         with open(secret_file_path, "w") as f:
             f.write(secret)
         print(f'Secret written to file: "{secret_file_path}"')
-    except OSError as ioe:
-        print(f"Error writing secret to file: {ioe}")
+    except OSError as ose:
+        print(f"Error writing secret to file: {ose}")
 
 
 # TODO: refactor this function so kagenti-client-registration image can use it
@@ -58,7 +58,7 @@ def register_client(keycloak_admin: KeycloakAdmin, client_id: str, client_payloa
     Ensure a Keycloak client exists.
     Returns the internal client ID.
     """
-    internal_client_id = keycloak_admin.get_client_id(f"{client_id}")
+    internal_client_id = keycloak_admin.get_client_id(client_id)
     if internal_client_id:
         print(f'Client "{client_id}" already exists with ID: {internal_client_id}')
         return internal_client_id
@@ -91,7 +91,7 @@ def get_client_id() -> str:
         print(f"An error occurred: {e}")
 
     if content is None or content.strip() == "":
-        raise Exception(f"No content read from SVID JWT.")
+        raise Exception("No content read from SVID JWT.")
 
     decoded = jwt.decode(content, options={"verify_signature": False})
     if "sub" not in decoded:

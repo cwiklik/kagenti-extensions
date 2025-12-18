@@ -385,5 +385,4 @@ EmptyDir
 localtest
 ui
 keycloak
-localtest
 AuthProxy
