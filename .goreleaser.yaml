@@ -22,7 +22,7 @@ archives:
 kos:
   - id: "kagenti-webhook-ko"
     repositories:
-    - ghcr.io/kagenti/kagenti-extensions/kagenti-webhook-chart
+    - ghcr.io/kagenti/kagenti-extensions/kagenti-webhook
     working_dir: kagenti-webhook
     main: ./cmd
     build: kagenti-webhook
