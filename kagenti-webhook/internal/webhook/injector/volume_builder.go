@@ -22,6 +22,9 @@ import (
 
 // creates all volumes required for sidecar containers
 func BuildRequiredVolumes() []corev1.Volume {
+	// Helper for pointer to bool
+	isReadOnly := true
+
 	return []corev1.Volume{
 		{
 			Name: "shared-data",
@@ -30,10 +33,12 @@ func BuildRequiredVolumes() []corev1.Volume {
 			},
 		},
 		{
+			// Updated from HostPath to CSI
 			Name: "spire-agent-socket",
 			VolumeSource: corev1.VolumeSource{
-				HostPath: &corev1.HostPathVolumeSource{
-					Path: "/run/spire/agent-sockets",
+				CSI: &corev1.CSIVolumeSource{
+					Driver:   "csi.spiffe.io",
+					ReadOnly: &isReadOnly,
 				},
 			},
 		},
