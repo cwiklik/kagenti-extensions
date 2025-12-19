@@ -1,0 +1,112 @@
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: environments
+data:
+  # Replace these placeholder values with real endpoints/credentials
+  KEYCLOAK_URL: "http://keycloak.keycloak.svc:8080"
+  KEYCLOAK_REALM: "master"
+  KEYCLOAK_ADMIN_USERNAME: "admin"
+  KEYCLOAK_ADMIN_PASSWORD: "admin"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-app
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: my-app
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: my-app
+    spec:
+      imagePullSecrets:
+        - name: ghcr-secret
+      containers:
+        - name: my-app
+          image: busybox:latest
+          command: ["sh", "-c", "sleep 3600"]
+          volumeMounts:
+            - name: shared-data
+              mountPath: /shared
+        - name: spiffe-helper
+          image: ghcr.io/spiffe/spiffe-helper:nightly
+          command:
+            - /spiffe-helper
+            - -config=/etc/spiffe-helper/helper.conf
+            - run
+          volumeMounts:
+            - name: spiffe-helper-config
+              mountPath: /etc/spiffe-helper
+            - name: spire-agent-socket
+              mountPath: /spiffe-workload-api
+            - name: svid-output
+              mountPath: /opt
+        - name: client-registration
+          image: ghcr.io/kagenti/kagenti/client-registration:latest
+          command:
+            - /bin/sh
+            - -c
+            - >
+              while [ ! -f /opt/jwt_svid.token ]; do echo waiting for SVID; sleep 1; done;
+              python client_registration.py;
+              tail -f /dev/null
+          env:
+            - name: KEYCLOAK_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: environments
+                  key: KEYCLOAK_URL
+                  optional: true
+            - name: KEYCLOAK_REALM
+              valueFrom:
+                configMapKeyRef:
+                  name: environments
+                  key: KEYCLOAK_REALM
+            - name: KEYCLOAK_ADMIN_USERNAME
+              valueFrom:
+                configMapKeyRef:
+                  name: environments
+                  key: KEYCLOAK_ADMIN_USERNAME
+            - name: KEYCLOAK_ADMIN_PASSWORD
+              valueFrom:
+                configMapKeyRef:
+                  name: environments
+                  key: KEYCLOAK_ADMIN_PASSWORD
+            - name: CLIENT_NAME
+              value: my-app
+          volumeMounts:
+            - name: shared-data
+              mountPath: /shared
+            - name: svid-output
+              mountPath: /opt
+      volumes:
+        - name: shared-data
+          emptyDir: {}
+        - name: spiffe-helper-config
+          configMap:
+            name: spiffe-helper-config
+        - name: spire-agent-socket
+          hostPath:
+            path: /run/spire/agent-sockets
+        - name: svid-output
+          emptyDir: {}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: spiffe-helper-config
+data:
+  helper.conf: |
+    agent_address = "/spiffe-workload-api/spire-agent.sock"
+    cmd = ""
+    cmd_args = ""
+    svid_file_name = "/opt/svid.pem"
+    svid_key_file_name = "/opt/svid_key.pem"
+    svid_bundle_file_name = "/opt/svid_bundle.pem"
+    jwt_svids = [{jwt_audience="kagenti", jwt_svid_file_name="/opt/jwt_svid.token"}]
+    jwt_svid_file_mode = 0644
+    include_federated_domains = true
