@@ -4,49 +4,35 @@ kind: ConfigMap
 metadata:
   name: environments
 data:
-  SPIFFE_ENABLED: "true"
+  SPIFFE_ENABLED: "false"
   # Replace these placeholder values with real endpoints/credentials
-  KEYCLOAK_URL: "http://keycloak.keycloak.svc:8080"
-  KEYCLOAK_REALM: "master"
+  KEYCLOAK_URL: "http://keycloak.localtest.me:8080"
+  KEYCLOAK_REALM: "demo"
   KEYCLOAK_ADMIN_USERNAME: "admin"
   KEYCLOAK_ADMIN_PASSWORD: "admin"
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: my-app
+  name: {{ COMPONENT_NAME }}
 spec:
   selector:
     matchLabels:
-      app.kubernetes.io/name: my-app
+      app.kubernetes.io/name: {{ COMPONENT_NAME }}
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: my-app
+        app.kubernetes.io/name: {{ COMPONENT_NAME }}
     spec:
       imagePullSecrets:
         - name: ghcr-secret
       containers:
-        - name: my-app
-          image: busybox:latest
-          command: ["sh", "-c", "sleep 3600"]
+        - name: {{ COMPONENT_NAME }}
+          image: {{ IMAGE_REGISTRY }}/{{ IMAGE_NAME }}:{{ IMAGE_TAG }}
           volumeMounts:
             - name: shared-data
               mountPath: /shared
-        - name: spiffe-helper
-          image: ghcr.io/spiffe/spiffe-helper:nightly
-          command:
-            - /spiffe-helper
-            - -config=/etc/spiffe-helper/helper.conf
-            - run
-          volumeMounts:
-            - name: spiffe-helper-config
-              mountPath: /etc/spiffe-helper
-            - name: spire-agent-socket
-              mountPath: /spiffe-workload-api
-            - name: svid-output
-              mountPath: /opt
-        - name: client-registration
+        - name: kagenti-client-registration
           image: ghcr.io/kagenti/kagenti/client-registration:latest
           command:
             - /bin/sh
@@ -82,36 +68,10 @@ spec:
                   name: environments
                   key: KEYCLOAK_ADMIN_PASSWORD
             - name: CLIENT_NAME
-              value: my-app
+              value: {{ COMPONENT_NAME }}
           volumeMounts:
             - name: shared-data
               mountPath: /shared
-            - name: svid-output
-              mountPath: /opt
       volumes:
         - name: shared-data
           emptyDir: {}
-        - name: spiffe-helper-config
-          configMap:
-            name: spiffe-helper-config
-        - name: spire-agent-socket
-          hostPath:
-            path: /run/spire/agent-sockets
-        - name: svid-output
-          emptyDir: {}
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: spiffe-helper-config
-data:
-  helper.conf: |
-    agent_address = "/spiffe-workload-api/spire-agent.sock"
-    cmd = ""
-    cmd_args = ""
-    svid_file_name = "/opt/svid.pem"
-    svid_key_file_name = "/opt/svid_key.pem"
-    svid_bundle_file_name = "/opt/svid_bundle.pem"
-    jwt_svids = [{jwt_audience="kagenti", jwt_svid_file_name="/opt/jwt_svid.token"}]
-    jwt_svid_file_mode = 0644
-    include_federated_domains = true

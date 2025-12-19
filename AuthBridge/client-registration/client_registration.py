@@ -100,29 +100,23 @@ def get_client_id() -> str:
         raise Exception('SVID JWT does not contain a "sub" claim.')
     return decoded["sub"]
 
+client_name = get_env_var("CLIENT_NAME")
 
-client_id = get_client_id()
+# If SPIFFE is enabled, use the client ID from the SVID JWT.
+# Otherwise, use the client name as the client ID.
+if get_env_var("SPIFFE_ENABLED", "false").lower() == "true":
+    client_id = get_client_id()
+else:
+    client_id = client_name
 
 try:
     KEYCLOAK_URL = get_env_var("KEYCLOAK_URL")
-    KEYCLOAK_TOKEN_EXCHANGE_ENABLED = (
-        get_env_var("KEYCLOAK_TOKEN_EXCHANGE_ENABLED", "true").lower() == "true"
-    )
-    KEYCLOAK_CLIENT_REGISTRATION_ENABLED = (
-        get_env_var("KEYCLOAK_CLIENT_REGISTRATION_ENABLED", "true").lower() == "true"
-    )
 except ValueError as e:
     print(
-        f"Expected environment variable missing. Skipping client registration of {client_id}."
+        f"Expected environment variable missing. Skipping client registration of {client_name}."
     )
     print(e)
     exit(1)
-
-if not KEYCLOAK_CLIENT_REGISTRATION_ENABLED:
-    print(
-        f"Client registration (KEYCLOAK_CLIENT_REGISTRATION_ENABLED=false) disabled. Skipping registration of {client_id}."
-    )
-    exit(0)
 
 keycloak_admin = KeycloakAdmin(
     server_url=KEYCLOAK_URL,
@@ -131,8 +125,6 @@ keycloak_admin = KeycloakAdmin(
     realm_name=get_env_var("KEYCLOAK_REALM"),
     user_realm_name="master",
 )
-
-client_name = get_env_var("CLIENT_NAME")
 
 internal_client_id = register_client(
     keycloak_admin,
@@ -150,9 +142,7 @@ internal_client_id = register_client(
         # Security considerations: Ensure only trusted clients have this capability, restrict scopes and permissions as needed,
         # and audit usage to prevent privilege escalation or unauthorized access.
         "attributes": {
-            "standard.token.exchange.enabled": str(
-                KEYCLOAK_TOKEN_EXCHANGE_ENABLED
-            ).lower(),  # Enable token exchange
+            "standard.token.exchange.enabled": "true",  # Enable token exchange
         },
     },
 )
