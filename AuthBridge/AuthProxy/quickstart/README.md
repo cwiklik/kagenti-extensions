@@ -2,22 +2,31 @@
 
 This document gives a step-by-step tutorial of getting started with the AuthProxy in a local Kind cluster. 
 
-The final architecture deployed is as follows: `CURL command -> AuthProxy -> AuthTarget`
+The final architecture deployed is as follows: `CURL command -> AuthProxy -> Target`
 
-The AuthTarget is a demo target application. The AuthProxy will validate bearer tokens in incoming requests and exchange them for the AuthTarget. 
+The Target is a demo target application. The AuthProxy will validate bearer tokens in incoming requests and exchange them for the Target. 
 
 The demo goes as follows:
 1. Install Kagenti
-1. Build and deploy the AuthTarget and AuthProxy
+1. Build and deploy the Target and AuthProxy
 1. Configure Keycloak
 1. Test the flow
 
 ## Step 1: Install Kagenti
 First, we recommend to deploy Kagenti to a local Kind cluster with the Ansible installer. Instructions are available [here](https://github.com/kagenti/kagenti/blob/main/docs/install.md#ansible-based-installer-alternative). 
 
+This should start a local Kind cluster named `kagenti`. 
+
 The key component is Keycloak which has been deployed to the `keycloak` namespace and exposed as `keycloak-service`. 
 
-## Step 2: Build and deploy the AuthTarget and AuthProxy
+## Step 2: Build and deploy the Target and AuthProxy
+
+Let's clone the assets locally:
+
+```bash
+git clone git@github.com:kagenti/kagenti-extensions.git
+cd kagent-extensions/AuthBridge/AuthProxy
+```
 
 We can use the following `make` commands to build and load the images to the Kind cluster:
 
@@ -25,6 +34,8 @@ We can use the following `make` commands to build and load the images to the Kin
 make build-images
 make load-images
 ```
+
+If the above gives error `ERROR: no nodes found...` set the `KIND_CLUSTER_NAME` environment variable to the name of the kind cluster you are using. 
 
 Then we can create two deployments in Kubernetes:
 
@@ -46,6 +57,8 @@ The `auth_proxy_caller` will be used by us on the command line to obtain an init
 TODO add scripts
 
 ## Step 4: Test the Flow
+
+First let's get the client secret:
 
 First, let's obtain an initial access token using the following command: 
 

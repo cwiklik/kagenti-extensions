@@ -1,5 +1,7 @@
 .PHONY: dev clean build build-images run-proxy run-target test docker-build-proxy docker-build-target docker-build-init docker-build-python deploy load-images undeploy kind-create kind-delete
 
+KIND_CLUSTER_NAME ?= kagenti # default to kagenti cluster name
+
 # Docker build targets
 docker-build-proxy:
 	podman build -t auth-proxy:latest .
@@ -21,10 +23,10 @@ build-images: docker-build-proxy docker-build-target docker-build-init docker-bu
 
 # Load Docker images into kind cluster
 load-images:
-	kind load docker-image auth-proxy:latest --name agent-platform
-	kind load docker-image auth-target:latest --name agent-platform
-	kind load docker-image proxy-init:latest --name agent-platform
-	kind load docker-image envoy-with-processor:latest --name agent-platform
+	kind load docker-image auth-proxy:latest --name $(KIND_CLUSTER_NAME)
+	kind load docker-image auth-target:latest --name $(KIND_CLUSTER_NAME)
+	kind load docker-image proxy-init:latest --name $(KIND_CLUSTER_NAME)
+	kind load docker-image envoy-with-processor:latest --name $(KIND_CLUSTER_NAME)
 
 # Deploy to Kubernetes
 deploy:
@@ -38,10 +40,10 @@ undeploy:
 
 # Kind cluster management
 kind-create:
-	kind create cluster --name agent-platform
+	kind create cluster --name $(KIND_CLUSTER_NAME)
 
 kind-delete:
-	kind delete cluster --name agent-platform
+	kind delete cluster --name $(KIND_CLUSTER_NAME)
 
 # Test the application
 test:
