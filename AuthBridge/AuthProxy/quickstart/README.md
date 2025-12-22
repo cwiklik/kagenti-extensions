@@ -54,7 +54,16 @@ kubectl port-forward svc/auth-proxy-service 9090:8080
 Now that our services are deployed, we can configure Keycloak with two clients: `auth_proxy_caller` and `auth_proxy`. 
 The `auth_proxy_caller` will be used by us on the command line to obtain an initial access token that is accepted by the `auth_proxy`. The `auth_proxy` will be used by the AuthProxy pod to exchange the token. 
 
-TODO add scripts
+Let's setup a light Python environment and run the script:
+
+```bash
+cd quickstart
+python -m venv venv
+source venv/bin/activate
+pip install --upgrade pip
+pip install -r requirements.txt
+python setup_keycloak.py
+```
 
 ## Step 4: Test the Flow
 
