@@ -137,7 +137,7 @@ Since we are not using SPIRE here, the client id will be the same as the value p
        value: my-app
 ```
 
-Apply the example deployment:  
+Apply the example deployment:
 
 ```bash
 kubectl apply -f example_deployment.yaml
