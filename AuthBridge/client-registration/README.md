@@ -2,7 +2,7 @@
 
 `client-registration` is a container image designed to automatically register Kubernetes workloads as OAuth2/OpenID Connect clients in Keycloak. It may be used with SPIFFE/SPIRE to use the pod’s SPIFFE ID as the client identifier, simplifying secure service-to-service authentication and reducing manual configuration.
 
-When registering this pod with Keycloak as a Keycloack client this code uses the following as client name:
+When registering this pod with Keycloak as a Keycloak client this code uses the following as client name:
 
 - SPIFFE Id, when using SPIRE (e.g. `spiffe://localtest.me/ns/my-agent/sa/my-service-account` )
 - Value of `CLIENT_NAME` specified in pod env. variable
