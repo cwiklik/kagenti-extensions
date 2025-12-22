@@ -48,4 +48,5 @@ Thumbs.db
 # Ko
 .ko/
 
+# venv
 venv
