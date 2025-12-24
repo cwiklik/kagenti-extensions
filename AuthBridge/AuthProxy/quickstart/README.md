@@ -69,10 +69,7 @@ This will spit out a command to export the `CLIENT_SECRET`. Run this command.
 
 ## Step 4: Test the Flow
 
-First let's get the client secret:
-
-First, let's obtain an initial access token using the following command: 
-
+Using the exported `CLIENT_SECRET` environment variable, obtain an initial access token with the following command: 
 ```
 export ACCESS_TOKEN=$(curl -sX POST -H "Content-Type: application/x-www-form-urlencoded" -d "client_secret=$CLIENT_SECRET" -d "grant_type=password" -d "client_id=application-caller" -d "username=test-user" -d "password=password" "http://keycloak.localtest.me:8080/realms/demo/protocol/openid-connect/token" | jq -r '.access_token')
 ```
