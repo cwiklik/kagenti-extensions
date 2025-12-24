@@ -7,7 +7,7 @@ KEYCLOAK_ADMIN_PASSWORD = "admin"
 
 # Helper functions
 def get_or_create_user(keycloak_admin, username):
-    users=keycloak_admin.get_users({"username": username})
+    users = keycloak_admin.get_users({"username": username})
     user_id = None
     if users:
         # Filter strictly because search is fuzzy
