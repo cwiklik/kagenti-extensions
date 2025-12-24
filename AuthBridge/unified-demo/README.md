@@ -196,9 +196,19 @@ kubectl exec -it deployment/caller -c caller -- sh
 
 # Inside the container:
 
-# Read the auto-generated client secret
+# Read the auto-generated client secret and client id
 CLIENT_SECRET=$(cat /shared/client-secret.txt)
+CLIENT_ID=$(cat /shared/client-id.txt)
 echo "Client secret: $CLIENT_SECRET"
+echo "Client id: $CLIENT_ID"
+
+TOKEN=$(curl -sX POST http://keycloak-service.keycloak.svc:8080/realms/demo/protocol/openid-connect/token \
+  -d 'grant_type=client_credentials' \
+  -d "client_id=$CLIENT_ID" \
+  -d "client_secret=$CLIENT_SECRET" | jq -r '.access_token')
+
+curl -H "Authorization: Bearer $TOKEN" http://demo-app-service:8081/test
+
 
 # Get the client ID (SPIFFE ID or "caller" for no-spiffe version)
 # For SPIFFE version, check Keycloak for the registered client ID
