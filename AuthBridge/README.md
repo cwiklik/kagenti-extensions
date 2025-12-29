@@ -59,6 +59,43 @@ The AuthBridge demo showcases a complete **zero-trust authentication flow** for 
                                                             "authorized"
 ```
 
+<details>
+<summary><b>📊 Mermaid Diagram (click to expand)</b></summary>
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant SPIRE as SPIRE Agent
+    participant Helper as SPIFFE Helper
+    participant Reg as Client Registration
+    participant Caller as Caller
+    participant Envoy as Envoy + Go Processor
+    participant KC as Keycloak
+    participant Target as Auth Target
+
+    Note over Helper,SPIRE: Pod Initialization
+    SPIRE->>Helper: SVID (SPIFFE credentials)
+    Helper->>Reg: JWT with SPIFFE ID
+    Reg->>KC: Register client (SPIFFE ID)
+    KC-->>Reg: Client credentials
+
+    Note over Caller,Target: Request Flow
+    Caller->>KC: Get token (client_credentials)
+    KC-->>Caller: Token (aud: authproxy)
+    
+    Caller->>Envoy: Request + Token
+    Note over Envoy: Intercepts outbound traffic
+    
+    Envoy->>KC: Token Exchange
+    KC-->>Envoy: New Token (aud: auth-target)
+    
+    Envoy->>Target: Request + Exchanged Token
+    Target->>Target: Validate token
+    Target-->>Caller: "authorized"
+```
+
+</details>
+
 ### What Gets Verified
 
 | Step | Component | Verification |
@@ -116,6 +153,54 @@ The AuthBridge demo showcases a complete **zero-trust authentication flow** for 
                     │  "auth-target"      │
                     └─────────────────────┘
 ```
+
+<details>
+<summary><b>📊 Mermaid Architecture Diagram (click to expand)</b></summary>
+
+```mermaid
+flowchart TB
+    subgraph CallerPod["CALLER POD (namespace: authbridge, sa: caller)"]
+        subgraph Init["Init Container"]
+            ProxyInit["proxy-init<br/>(iptables setup)"]
+        end
+        subgraph Containers["Containers"]
+            Caller["Caller<br/>(netshoot)"]
+            SpiffeHelper["SPIFFE Helper<br/>(provides SVID)"]
+            ClientReg["client-registration<br/>(registers with Keycloak)"]
+            subgraph Sidecar["AuthProxy Sidecar"]
+                AuthProxy["auth-proxy"]
+                Envoy["envoy-proxy"]
+                GoProc["go-processor"]
+            end
+        end
+    end
+
+    subgraph TargetPod["AUTH TARGET POD"]
+        AuthTarget["auth-target<br/>(validates tokens)"]
+    end
+
+    subgraph External["External Services"]
+        SPIRE["SPIRE Agent"]
+        Keycloak["Keycloak"]
+    end
+
+    SPIRE --> SpiffeHelper
+    SpiffeHelper --> ClientReg
+    ClientReg --> Keycloak
+    Caller --> Keycloak
+    Caller -->|"Request + Token<br/>(aud: authproxy)"| Envoy
+    Envoy --> GoProc
+    GoProc -->|"Token Exchange"| Keycloak
+    Envoy -->|"Request + Token<br/>(aud: auth-target)"| AuthTarget
+    AuthTarget -->|"authorized"| Caller
+
+    style CallerPod fill:#e1f5fe
+    style TargetPod fill:#e8f5e9
+    style Sidecar fill:#fff3e0
+    style External fill:#fce4ec
+```
+
+</details>
 
 ### Token Flow
 
