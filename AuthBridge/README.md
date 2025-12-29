@@ -291,6 +291,115 @@ echo "Result: $(curl -s -H "Authorization: Bearer $TOKEN" http://auth-target-ser
 '
 ```
 
+### Step 8: Inspect Token Claims (Before and After Exchange)
+
+This step shows how the token claims change during the exchange process.
+
+#### View Original Token Claims (Before Exchange)
+
+From inside the caller container, inspect the token obtained from Keycloak:
+
+```bash
+# Get the token
+CLIENT_ID=$(cat /shared/client-id.txt)
+CLIENT_SECRET=$(cat /shared/client-secret.txt)
+TOKEN=$(curl -sX POST http://keycloak-service.keycloak.svc:8080/realms/demo/protocol/openid-connect/token \
+  -d 'grant_type=client_credentials' \
+  -d "client_id=$CLIENT_ID" \
+  -d "client_secret=$CLIENT_SECRET" | jq -r '.access_token')
+
+# Decode and display important claims
+echo "=== ORIGINAL TOKEN (Before Exchange) ==="
+echo $TOKEN | cut -d'.' -f2 | base64 -d 2>/dev/null | jq '{
+  aud: .aud,
+  azp: .azp,
+  scope: .scope,
+  iss: .iss,
+  sub: .sub,
+  exp: .exp,
+  iat: .iat
+}'
+```
+
+**Expected output:**
+```json
+{
+  "aud": "authproxy",
+  "azp": "spiffe://localtest.me/ns/authbridge/sa/caller",
+  "scope": "profile authproxy-aud email",
+  "iss": "http://keycloak.localtest.me:8080/realms/demo",
+  "sub": "...",
+  "exp": 1234567890,
+  "iat": 1234567890
+}
+```
+
+Key observations:
+- `aud: "authproxy"` - Token is scoped for AuthProxy
+- `azp` - The SPIFFE ID of the caller (authorized party)
+- `scope` - Includes `authproxy-aud` scope
+
+#### View Exchanged Token Claims (After Exchange)
+
+To see the token after exchange, check the auth-target logs which display the received token:
+
+```bash
+kubectl logs deployment/auth-target -n authbridge | grep -A 20 "JWT Debug"
+```
+
+**Expected output:**
+```shell
+[JWT Debug] Successfully validated token
+[JWT Debug] Audience: [auth-target]
+[JWT Debug] Subject: ...
+```
+
+#### Complete Token Comparison Script
+
+Run this from the caller container to see both tokens side-by-side:
+
+```bash
+kubectl exec deployment/caller -n authbridge -c caller -- sh -c '
+CLIENT_ID=$(cat /shared/client-id.txt)
+CLIENT_SECRET=$(cat /shared/client-secret.txt)
+
+# Get original token
+TOKEN=$(curl -s http://keycloak-service.keycloak.svc:8080/realms/demo/protocol/openid-connect/token \
+  -d "grant_type=client_credentials" \
+  -d "client_id=$CLIENT_ID" \
+  -d "client_secret=$CLIENT_SECRET" | jq -r ".access_token")
+
+echo "╔══════════════════════════════════════════════════════════════╗"
+echo "║           ORIGINAL TOKEN (Before Exchange)                   ║"
+echo "╚══════════════════════════════════════════════════════════════╝"
+echo $TOKEN | cut -d"." -f2 | base64 -d 2>/dev/null | jq "{aud, azp, scope}"
+
+echo ""
+echo "╔══════════════════════════════════════════════════════════════╗"
+echo "║  Calling auth-target... (token exchange happens here)       ║"
+echo "╚══════════════════════════════════════════════════════════════╝"
+RESULT=$(curl -s -H "Authorization: Bearer $TOKEN" http://auth-target-service:8081/test)
+echo "Result: $RESULT"
+
+echo ""
+echo "╔══════════════════════════════════════════════════════════════╗"
+echo "║  Check auth-target logs for EXCHANGED token claims          ║"
+echo "╚══════════════════════════════════════════════════════════════╝"
+echo "Run: kubectl logs deployment/auth-target -n authbridge | tail -20"
+'
+```
+
+#### Token Claims Summary
+
+| Claim | Before Exchange | After Exchange |
+|-------|-----------------|----------------|
+| `aud` | `authproxy` | `auth-target` |
+| `azp` | SPIFFE ID (caller) | `authproxy` |
+| `scope` | `authproxy-aud` | `auth-target-aud` |
+| `iss` | Keycloak realm | Keycloak realm (same) |
+
+The key change is the **audience (`aud`)** - it transforms from `authproxy` to `auth-target`, allowing the target service to validate the token.
+
 ## Verification
 
 ### Check Client Registration
