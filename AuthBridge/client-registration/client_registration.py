@@ -146,6 +146,7 @@ internal_client_id = register_client(
         "clientId": client_id,
         "standardFlowEnabled": True,
         "directAccessGrantsEnabled": True,
+        "serviceAccountsEnabled": True,  # Required for client_credentials grant
         "fullScopeAllowed": False,
         "publicClient": False,  # Enable client authentication
         # Enable token exchange for this client.
