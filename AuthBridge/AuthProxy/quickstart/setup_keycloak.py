@@ -1,4 +1,4 @@
-from keycloak import KeycloakAdmin, KeycloakGetError
+from keycloak import KeycloakAdmin, KeycloakGetError, KeycloakPostError
 
 KEYCLOAK_URL = "http://keycloak.localtest.me:8080"
 KEYCLOAK_REALM = "demo"
