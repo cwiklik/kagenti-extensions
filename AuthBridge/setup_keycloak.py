@@ -4,26 +4,26 @@ setup_keycloak.py - AuthBridge Demo Setup
 This script configures Keycloak for the AuthBridge demo that combines:
 1. Client Registration with SPIFFE ID (for the caller)
 2. AuthProxy sidecar for token exchange
-3. Demo App (target server) that validates exchanged tokens
+3. Auth Target (target server) that validates exchanged tokens
 
 Architecture:
-  Caller Pod (BusyBox + SPIFFE Helper + Client Registration + AuthProxy)
+  Caller Pod (Caller + SPIFFE Helper + Client Registration + AuthProxy)
        |
        | Token with audience "authproxy" (or caller's SPIFFE ID)
        v
   AuthProxy (Envoy) exchanges token
        |
-       | Token with audience "demoapp"
+       | Token with audience "auth-target"
        v
-  Demo App (validates token)
+  Auth Target (validates token)
 
 Clients created:
-- authproxy: Used by AuthProxy to exchange tokens for demo-app access
-- demoapp: Target audience for token exchange (required by Keycloak)
+- authproxy: Used by AuthProxy to exchange tokens for auth-target access
+- auth-target: Target audience for token exchange (required by Keycloak)
 
 Client Scopes created:
 - authproxy-aud: Adds "authproxy" to token audience
-- demoapp-aud: Adds "demoapp" to token audience
+- auth-target-aud: Adds "auth-target" to token audience
 
 Note: The caller client is auto-registered by the client-registration init container
 using the SPIFFE ID as the client ID.
@@ -129,7 +129,7 @@ def main():
         print("\nMake sure Keycloak is running and accessible at:")
         print(f"  {KEYCLOAK_URL}")
         print("\nIf using port-forward, run:")
-        print("  kubectl port-forward service/keycloak -n keycloak 8080:8080")
+        print("  kubectl port-forward service/keycloak-service -n keycloak 8080:8080")
         sys.exit(1)
     
     # Create demo realm if needed
@@ -160,12 +160,12 @@ def main():
         }
     })
     
-    # Create demoapp client (required as token exchange audience target)
-    print("\n--- Creating demoapp client ---")
+    # Create auth-target client (required as token exchange audience target)
+    print("\n--- Creating auth-target client ---")
     print("This client is required as the target audience for token exchange")
-    demoapp_id = get_or_create_client(keycloak_admin, {
-        "clientId": "demoapp",
-        "name": "Demo App",
+    auth_target_id = get_or_create_client(keycloak_admin, {
+        "clientId": "auth-target",
+        "name": "Auth Target",
         "enabled": True,
         "publicClient": False,
         "standardFlowEnabled": False,
@@ -190,17 +190,17 @@ def main():
     })
     add_audience_mapper(keycloak_admin, authproxy_scope_id, "authproxy-aud", "authproxy")
     
-    # demoapp-aud scope - added to exchanged tokens
-    # This makes the AuthProxy's exchanged token valid for demo-app
-    demoapp_scope_id = get_or_create_client_scope(keycloak_admin, {
-        "name": "demoapp-aud",
+    # auth-target-aud scope - added to exchanged tokens
+    # This makes the AuthProxy's exchanged token valid for auth-target
+    auth_target_scope_id = get_or_create_client_scope(keycloak_admin, {
+        "name": "auth-target-aud",
         "protocol": "openid-connect",
         "attributes": {
             "include.in.token.scope": "true",
             "display.on.consent.screen": "true"
         }
     })
-    add_audience_mapper(keycloak_admin, demoapp_scope_id, "demoapp-aud", "demoapp")
+    add_audience_mapper(keycloak_admin, auth_target_scope_id, "auth-target-aud", "auth-target")
     
     # Assign scopes
     print("\n--- Assigning scopes ---")
@@ -214,19 +214,19 @@ def main():
     except Exception as e:
         print(f"Note: Could not add 'authproxy-aud' as default scope (might already exist): {e}")
     
-    # authproxy gets demoapp-aud (so its exchanged tokens target demoapp)
+    # authproxy gets auth-target-aud (so its exchanged tokens target auth-target)
     try:
-        keycloak_admin.add_client_default_client_scope(authproxy_id, demoapp_scope_id, {})
-        print("Assigned 'demoapp-aud' as default scope to 'authproxy'.")
+        keycloak_admin.add_client_default_client_scope(authproxy_id, auth_target_scope_id, {})
+        print("Assigned 'auth-target-aud' as default scope to 'authproxy'.")
     except Exception as e:
-        print(f"Note: Could not assign 'demoapp-aud' scope (might already exist): {e}")
+        print(f"Note: Could not assign 'auth-target-aud' scope (might already exist): {e}")
     
-    # demoapp also gets demoapp-aud (so tokens for demoapp have correct audience)
+    # auth-target also gets auth-target-aud (so tokens for auth-target have correct audience)
     try:
-        keycloak_admin.add_client_default_client_scope(demoapp_id, demoapp_scope_id, {})
-        print("Assigned 'demoapp-aud' as default scope to 'demoapp'.")
+        keycloak_admin.add_client_default_client_scope(auth_target_id, auth_target_scope_id, {})
+        print("Assigned 'auth-target-aud' as default scope to 'auth-target'.")
     except Exception as e:
-        print(f"Note: Could not assign 'demoapp-aud' scope to demoapp (might already exist): {e}")
+        print(f"Note: Could not assign 'auth-target-aud' scope to auth-target (might already exist): {e}")
     
     # Retrieve and display secrets
     print("\n" + "=" * 60)
@@ -245,7 +245,7 @@ def main():
         print("=" * 60)
         
         print("\n1. Update the auth-proxy-config secret with the authproxy client secret:")
-        print(f"\n   kubectl patch secret auth-proxy-config -p '{{\"stringData\":{{\"CLIENT_SECRET\":\"{authproxy_secret}\"}}}}'\n")
+        print(f"\n   kubectl patch secret auth-proxy-config -n authbridge -p '{{\"stringData\":{{\"CLIENT_SECRET\":\"{authproxy_secret}\"}}}}'\n")
         
         print("2. Deploy the AuthBridge demo:")
         print("\n   # With SPIFFE (requires SPIRE)")
@@ -254,12 +254,12 @@ def main():
         print("   kubectl apply -f k8s/authbridge-deployment-no-spiffe.yaml\n")
         
         print("3. Wait for pods to be ready:")
-        print("\n   kubectl wait --for=condition=available --timeout=120s deployment/caller")
-        print("   kubectl wait --for=condition=available --timeout=120s deployment/demo-app\n")
+        print("\n   kubectl wait --for=condition=available --timeout=120s deployment/caller -n authbridge")
+        print("   kubectl wait --for=condition=available --timeout=120s deployment/auth-target -n authbridge\n")
         
         print("4. Test from inside the caller pod:")
         print("""
-   kubectl exec -it deployment/caller -c caller -- sh
+   kubectl exec -it deployment/caller -n authbridge -c caller -- sh
    
    # Inside the container (credentials are auto-populated):
    CLIENT_ID=$(cat /shared/client-id.txt)
@@ -272,8 +272,8 @@ def main():
      -d "client_id=$CLIENT_ID" \\
      -d "client_secret=$CLIENT_SECRET" | jq -r '.access_token')
    
-   # Call demo-app (AuthProxy will exchange the token)
-   curl -H "Authorization: Bearer $TOKEN" http://demo-app-service:8081/test
+   # Call auth-target (AuthProxy will exchange the token)
+   curl -H "Authorization: Bearer $TOKEN" http://auth-target-service:8081/test
    # Expected: "authorized"
 """)
         

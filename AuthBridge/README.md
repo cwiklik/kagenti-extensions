@@ -2,11 +2,88 @@
 
 This demo combines the **Client Registration** and **AuthProxy** components to demonstrate a complete end-to-end authentication flow with SPIFFE/SPIRE integration.
 
+## Overview
+
+### What This Demo Demonstrates
+
+The AuthBridge demo showcases a complete **zero-trust authentication flow** for Kubernetes workloads:
+
+1. **Automatic Workload Identity** - A pod automatically obtains its identity from SPIFFE/SPIRE and registers itself as a Keycloak client using its SPIFFE ID (e.g., `spiffe://localtest.me/ns/authbridge/sa/caller`)
+
+2. **Token-Based Authentication** - The caller workload authenticates to Keycloak using `client_credentials` grant and receives a JWT token with audience `authproxy`
+
+3. **Transparent Token Exchange** - When the caller makes a request to the target service, an Envoy sidecar transparently intercepts the request and exchanges the token for one with the correct audience (`auth-target`)
+
+4. **Target Service Validation** - The target service validates the exchanged token, ensuring it has the correct audience before authorizing the request
+
+### End-to-End Flow
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│  1. SPIFFE Helper obtains SVID from SPIRE Agent                                 │
+│  2. Client Registration extracts SPIFFE ID and registers with Keycloak          │
+│  3. Caller gets token from Keycloak (audience: "authproxy")                     │
+│  4. Caller sends request to auth-target with token                              │
+│  5. Envoy intercepts request, Go Processor exchanges token (audience: "auth-target")│
+│  6. Auth Target validates token and returns "authorized"                         │
+└─────────────────────────────────────────────────────────────────────────────────┘
+
+  SPIRE Agent                    Keycloak                      Auth Target
+       │                            │                              │
+       │  1. SVID                   │                              │
+       ▼                            │                              │
+  ┌─────────┐                       │                              │
+  │ SPIFFE  │  2. Register client   │                              │
+  │ Helper  │──────────────────────►│                              │
+  └─────────┘                       │                              │
+       │                            │                              │
+       ▼                            │                              │
+  ┌─────────┐  3. Get token         │                              │
+  │ Caller  │──────────────────────►│                              │
+  │         │◄──────────────────────│                              │
+  │         │   (aud: authproxy)    │                              │
+  │         │                       │                              │
+  │         │  4. Request + token   │                              │
+  │         │───────────────────────┼─────────────────────────────►│
+  └─────────┘                       │                              │
+       │                            │                              │
+       │      ┌──────────────┐      │                              │
+       └─────►│ Envoy+GoPro  │      │                              │
+              │              │  5. Exchange token                  │
+              │              │─────►│                              │
+              │              │◄─────│                              │
+              │              │   (aud: auth-target)                │
+              │              │─────────────────────────────────────►│
+              └──────────────┘                              6. Validate & Authorize
+                                                                   │
+                                                            "authorized"
+```
+
+### What Gets Verified
+
+| Step | Component | Verification |
+|------|-----------|--------------|
+| 1 | SPIFFE Helper | SVID obtained from SPIRE Agent |
+| 2 | Client Registration | Keycloak client created with SPIFFE ID |
+| 3 | Caller | Token received with `aud: authproxy` |
+| 4 | Envoy + Go Processor | Token exchanged successfully |
+| 5 | Auth Target | Token validated with `aud: auth-target` |
+| 6 | End-to-End | Response: `"authorized"` |
+
+### Key Security Properties
+
+- **No Static Secrets** - The caller's client credentials are dynamically generated during registration
+- **Short-Lived Tokens** - JWT tokens expire and must be refreshed
+- **Audience Scoping** - Tokens are scoped to specific audiences, preventing token reuse across services
+- **Transparent to Application** - The caller application doesn't need to know about token exchange; it's handled by the sidecar
+
 ## Architecture
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
 │                           CALLER POD                                   │
+│                       (namespace: authbridge)                          │
+│                     (serviceAccount: caller)                           │
 │                                                                        │
 │  ┌─────────────────────────────────────────────────────────────────┐   │
 │  │  Init Container: proxy-init (iptables setup)                    │   │
@@ -28,15 +105,15 @@ This demo combines the **Client Registration** and **AuthProxy** components to d
 │            └───────────────────────────────────────────┘               │
 │                              │                                         │
 └──────────────────────────────┼─────────────────────────────────────────┘
-                               │ Token exchanged for demoapp audience
+                               │ Token exchanged for auth-target audience
                                ▼
                     ┌─────────────────────┐
-                    │    DEMO APP POD     │
+                    │   AUTH TARGET POD   │
                     │   (Target Server)   │
                     │                     │
                     │  Validates token    │
                     │  with audience      │
-                    │  "demoapp"          │
+                    │  "auth-target"      │
                     └─────────────────────┘
 ```
 
@@ -44,8 +121,8 @@ This demo combines the **Client Registration** and **AuthProxy** components to d
 
 1. **Client Registration** container uses the **SPIFFE ID** to register the caller workload with Keycloak
 2. **Caller** obtains a token from Keycloak using the auto-registered client credentials
-3. **AuthProxy + Envoy** (sidecar) intercepts the outgoing request and exchanges the token for one with audience `demoapp`
-4. **Demo App** (target server) validates the exchanged token
+3. **AuthProxy + Envoy** (sidecar) intercepts the outgoing request and exchanges the token for one with audience `auth-target`
+4. **Auth Target** (target server) validates the exchanged token
 
 ### Components in Caller Pod
 
@@ -111,37 +188,13 @@ python setup_keycloak.py
 The script creates:
 - `demo` realm
 - `authproxy` client (for token exchange)
-- `demoapp` client (token exchange target audience)
+- `auth-target` client (token exchange target audience)
 - `authproxy-aud` scope (realm default - all clients get it)
-- `demoapp-aud` scope (for exchanged tokens)
+- `auth-target-aud` scope (for exchanged tokens)
 
 **Important:** Copy the `authproxy` client secret from the output.
 
-### Step 3: Deploy the Secret
-
-```bash
-cd AuthBridge
-
-# Create the auth-proxy-config secret
-kubectl apply -f k8s/auth-proxy-config.yaml
-
-# IMPORTANT: Update with the actual authproxy client secret from Step 2
-# Copy the secret value from the setup_keycloak.py output
-kubectl patch secret auth-proxy-config -p '{"stringData":{"CLIENT_SECRET":"YOUR_AUTHPROXY_SECRET_HERE"}}'
-
-# Verify it was updated (should NOT show REPLACE_WITH_AUTHPROXY_SECRET)
-kubectl get secret auth-proxy-config -o jsonpath='{.data.CLIENT_SECRET}' | base64 -d && echo
-```
-
-### Step 4: Configure Image Pull Secret (if needed)
-
-If using Kagenti, copy the ghcr secret:
-
-```bash
-kubectl get secret ghcr-secret -n team1 -o yaml | sed 's/namespace: team1/namespace: default/' | kubectl apply -f -
-```
-
-### Step 5: Deploy the Demo
+### Step 3: Deploy the Demo
 
 ```bash
 cd AuthBridge
@@ -153,18 +206,49 @@ kubectl apply -f k8s/authbridge-deployment.yaml
 kubectl apply -f k8s/authbridge-deployment-no-spiffe.yaml
 ```
 
-Wait for deployments:
+This creates:
+
+- `authbridge` namespace
+- `caller` ServiceAccount
+- ConfigMaps and Secrets
+- `caller` and `auth-target` deployments
+
+### Step 4: Update the Secret
 
 ```bash
-kubectl wait --for=condition=available --timeout=180s deployment/caller
-kubectl wait --for=condition=available --timeout=120s deployment/demo-app
+kubectl apply -f k8s/auth-proxy-config.yaml 
+
+# IMPORTANT: Update with the actual authproxy client secret from Step 2
+# Copy the secret value from the setup_keycloak.py output
+kubectl patch secret auth-proxy-config -n authbridge -p '{"stringData":{"CLIENT_SECRET":"YOUR_AUTHPROXY_SECRET_HERE"}}'
+
+# Verify it was updated (should NOT show REPLACE_WITH_AUTHPROXY_SECRET)
+kubectl get secret auth-proxy-config -n authbridge -o jsonpath='{.data.CLIENT_SECRET}' | base64 -d && echo
+
+# Restart the caller pod to pick up the new secret
+kubectl delete pod -l app=caller -n authbridge
 ```
 
-### Step 6: Test the Flow
+### Step 5: Configure Image Pull Secret (if needed)
+
+If using Kagenti, copy the ghcr secret:
+
+```bash
+kubectl get secret ghcr-secret -n team1 -o yaml | sed 's/namespace: team1/namespace: authbridge/' | kubectl apply -f -
+```
+
+### Step 6: Wait for Deployments
+
+```bash
+kubectl wait --for=condition=available --timeout=180s deployment/caller -n authbridge
+kubectl wait --for=condition=available --timeout=120s deployment/auth-target -n authbridge
+```
+
+### Step 7: Test the Flow
 
 ```bash
 # Exec into the caller container
-kubectl exec -it deployment/caller -c caller -- sh
+kubectl exec -it deployment/caller -n authbridge -c caller -- sh
 ```
 
 Inside the container (or run as a single command):
@@ -188,8 +272,8 @@ echo "Token obtained!"
 # Verify token audience (should be "authproxy")
 echo $TOKEN | cut -d'.' -f2 | base64 -d 2>/dev/null | jq '{aud, azp, scope}'
 
-# Call demo-app (AuthProxy will exchange token for "demoapp" audience)
-curl -H "Authorization: Bearer $TOKEN" http://demo-app-service:8081/test
+# Call auth-target (AuthProxy will exchange token for "auth-target" audience)
+curl -H "Authorization: Bearer $TOKEN" http://auth-target-service:8081/test
 
 # Expected output: "authorized"
 ```
@@ -197,13 +281,13 @@ curl -H "Authorization: Bearer $TOKEN" http://demo-app-service:8081/test
 **Or run the complete test as a single command:**
 
 ```bash
-kubectl exec deployment/caller -c caller -- sh -c '
+kubectl exec deployment/caller -n authbridge -c caller -- sh -c '
 CLIENT_ID=$(cat /shared/client-id.txt)
 CLIENT_SECRET=$(cat /shared/client-secret.txt)
 TOKEN=$(curl -s http://keycloak-service.keycloak.svc:8080/realms/demo/protocol/openid-connect/token \
   -d "grant_type=client_credentials" -d "client_id=$CLIENT_ID" -d "client_secret=$CLIENT_SECRET" | jq -r ".access_token")
 echo "Token audience: $(echo $TOKEN | cut -d. -f2 | base64 -d 2>/dev/null | jq -r .aud)"
-echo "Result: $(curl -s -H "Authorization: Bearer $TOKEN" http://demo-app-service:8081/test)"
+echo "Result: $(curl -s -H "Authorization: Bearer $TOKEN" http://auth-target-service:8081/test)"
 '
 ```
 
@@ -212,7 +296,7 @@ echo "Result: $(curl -s -H "Authorization: Bearer $TOKEN" http://demo-app-servic
 ### Check Client Registration
 
 ```bash
-kubectl logs deployment/caller -c client-registration
+kubectl logs deployment/caller -n authbridge -c client-registration
 ```
 
 You should see:
@@ -227,7 +311,7 @@ Client registration complete!
 ### Check Token Exchange
 
 ```bash
-kubectl logs deployment/caller -c envoy-proxy 2>&1 | grep -i "token"
+kubectl logs deployment/caller -n authbridge -c envoy-proxy 2>&1 | grep -i "token"
 ```
 
 You should see:
@@ -238,17 +322,17 @@ You should see:
 [Token Exchange] Replacing token in Authorization header
 ```
 
-### Check Demo App
+### Check Auth Target
 
 ```bash
-kubectl logs deployment/demo-app
+kubectl logs deployment/auth-target -n authbridge
 ```
 
 You should see:
 
 ```shell
 [JWT Debug] Successfully validated token
-[JWT Debug] Audience: [demoapp]
+[JWT Debug] Audience: [auth-target]
 Authorized request: GET /test
 ```
 
@@ -264,7 +348,7 @@ Authorized request: GET /test
 
 **Symptom:** `{"error":"invalid_client","error_description":"Audience not found"}`
 
-**Fix:** The `demoapp` client must exist in Keycloak. Run `setup_keycloak.py` which creates it.
+**Fix:** The `auth-target` client must exist in Keycloak. Run `setup_keycloak.py` which creates it.
 
 ### Token Exchange Fails with "Client not enabled to retrieve service account"
 
@@ -289,7 +373,7 @@ Authorized request: GET /test
 The published `client-registration` image doesn't yet have the `serviceAccountsEnabled` fix. Run this to enable it:
 
 ```bash
-kubectl exec deployment/caller -c caller -- sh -c '
+kubectl exec deployment/caller -n authbridge -c caller -- sh -c '
 CLIENT_ID=$(cat /shared/client-id.txt)
 echo "Enabling service accounts for: $CLIENT_ID"
 
@@ -311,14 +395,14 @@ echo "Done!"
 
 ```bash
 # Caller pod containers
-kubectl logs deployment/caller -c caller
-kubectl logs deployment/caller -c client-registration
-kubectl logs deployment/caller -c spiffe-helper
-kubectl logs deployment/caller -c auth-proxy
-kubectl logs deployment/caller -c envoy-proxy
+kubectl logs deployment/caller -n authbridge -c caller
+kubectl logs deployment/caller -n authbridge -c client-registration
+kubectl logs deployment/caller -n authbridge -c spiffe-helper
+kubectl logs deployment/caller -n authbridge -c auth-proxy
+kubectl logs deployment/caller -n authbridge -c envoy-proxy
 
-# Demo app
-kubectl logs deployment/demo-app
+# Auth Target
+kubectl logs deployment/auth-target -n authbridge
 ```
 
 ## Cleanup
@@ -328,7 +412,8 @@ kubectl delete -f k8s/authbridge-deployment.yaml
 # OR
 kubectl delete -f k8s/authbridge-deployment-no-spiffe.yaml
 
-kubectl delete -f k8s/auth-proxy-config.yaml
+# Delete the namespace (removes everything)
+kubectl delete namespace authbridge
 ```
 
 ## Component Documentation

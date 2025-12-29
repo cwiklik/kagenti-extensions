@@ -3,15 +3,30 @@
 # This is a simplified version that doesn't require SPIRE.
 # The caller uses a static client ID instead of SPIFFE ID.
 #
-# Flow: BusyBox (Caller) -> AuthProxy (sidecar, exchanges token) -> Demo App (validates token)
+# Flow: Caller -> AuthProxy (sidecar, exchanges token) -> Auth Target (validates token)
 #
 # Pod 1: Caller Pod
-#   - BusyBox: The calling application
+#   - Caller: The calling application
 #   - Client Registration (init): Registers caller with Keycloak using static client ID
 #   - AuthProxy + Envoy: Intercepts outgoing traffic and exchanges tokens
 #
-# Pod 2: Demo App (Target Server)
-#   - Validates tokens with audience "demoapp"
+# Pod 2: Auth Target (Target Server)
+#   - Validates tokens with audience "auth-target"
+
+---
+# Namespace for AuthBridge demo
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: authbridge
+
+---
+# ServiceAccount for the caller pod
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: caller
+  namespace: authbridge
 
 ---
 # Shared ConfigMap for environment variables
@@ -19,6 +34,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: authbridge-config
+  namespace: authbridge
 data:
   SPIRE_ENABLED: "false"
   KEYCLOAK_URL: "http://keycloak-service.keycloak.svc:8080"
@@ -34,6 +50,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: envoy-config
+  namespace: authbridge
 data:
   envoy.yaml: |
     admin:
@@ -137,12 +154,13 @@ data:
 ---
 # =============================================================================
 # CALLER POD (No SPIFFE)
-# Contains: BusyBox (caller), Client Registration, AuthProxy
+# Contains: Caller, Client Registration, AuthProxy
 # =============================================================================
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: caller
+  namespace: authbridge
   labels:
     app: caller
 spec:
@@ -159,6 +177,7 @@ spec:
         ambient.istio.io/redirection: disabled
         sidecar.istio.io/inject: "false"
     spec:
+      serviceAccountName: caller
       imagePullSecrets:
         - name: ghcr-secret
       initContainers:
@@ -243,7 +262,7 @@ spec:
             - name: shared-data
               mountPath: /shared
       containers:
-        # Caller - the calling application (uses alpine with curl and jq)
+        # Caller - the calling application (uses netshoot with curl and jq)
         - name: caller
           image: nicolaka/netshoot:latest
           command:
@@ -275,7 +294,7 @@ spec:
               echo "    -d \"client_id=\$CLIENT_ID\" \\"
               echo "    -d \"client_secret=\$CLIENT_SECRET\" | jq -r '.access_token')"
               echo ""
-              echo "  curl -H \"Authorization: Bearer \$TOKEN\" http://demo-app-service:8081/test"
+              echo "  curl -H \"Authorization: Bearer \$TOKEN\" http://auth-target-service:8081/test"
               echo ""
               tail -f /dev/null
           volumeMounts:
@@ -292,7 +311,7 @@ spec:
             - name: PORT
               value: "8080"
             - name: TARGET_SERVICE_URL
-              value: "http://demo-app-service:8081"
+              value: "http://auth-target-service:8081"
             - name: ISSUER
               value: "http://keycloak.localtest.me:8080/realms/demo"
             - name: JWKS_URL
@@ -366,27 +385,28 @@ spec:
 
 ---
 # =============================================================================
-# DEMO APP POD (Target Server)
-# Validates tokens with audience "demoapp"
+# AUTH TARGET POD (Target Server)
+# Validates tokens with audience "auth-target"
 # =============================================================================
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: demo-app
+  name: auth-target
+  namespace: authbridge
   labels:
-    app: demo-app
+    app: auth-target
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: demo-app
+      app: auth-target
   template:
     metadata:
       labels:
-        app: demo-app
+        app: auth-target
     spec:
       containers:
-        - name: demo-app
+        - name: auth-target
           image: localhost/demo-app:latest
           imagePullPolicy: IfNotPresent
           ports:
@@ -397,7 +417,7 @@ spec:
             - name: JWKS_URL
               value: "http://keycloak-service.keycloak.svc.cluster.local:8080/realms/demo/protocol/openid-connect/certs"
             - name: AUDIENCE
-              value: "demoapp"
+              value: "auth-target"
           resources:
             requests:
               memory: "64Mi"
@@ -407,13 +427,14 @@ spec:
               cpu: "500m"
 
 ---
-# Demo App Service
+# Auth Target Service
 apiVersion: v1
 kind: Service
 metadata:
-  name: demo-app-service
+  name: auth-target-service
+  namespace: authbridge
   labels:
-    app: demo-app
+    app: auth-target
 spec:
   type: ClusterIP
   ports:
@@ -422,4 +443,4 @@ spec:
       protocol: TCP
       name: http
   selector:
-    app: demo-app
+    app: auth-target

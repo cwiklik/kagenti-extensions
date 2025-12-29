@@ -3,18 +3,33 @@
 # This deployment demonstrates:
 # 1. Caller pod with automatic client registration using SPIFFE ID
 # 2. AuthProxy sidecar intercepts outgoing requests and exchanges tokens
-# 3. Demo App (target server) validates the exchanged tokens
+# 3. Auth Target (target server) validates the exchanged tokens
 #
-# Flow: BusyBox (Caller) -> AuthProxy (sidecar, exchanges token) -> Demo App (validates token)
+# Flow: Caller -> AuthProxy (sidecar, exchanges token) -> Auth Target (validates token)
 #
 # Pod 1: Caller Pod
-#   - BusyBox: The calling application
+#   - Caller: The calling application
 #   - SPIFFE Helper: Provides SPIFFE credentials (SVID)
 #   - Client Registration: Registers caller with Keycloak using SPIFFE ID
 #   - AuthProxy + Envoy: Intercepts outgoing traffic and exchanges tokens
 #
-# Pod 2: Demo App (Target Server)
-#   - Validates tokens with audience "demoapp"
+# Pod 2: Auth Target (Target Server)
+#   - Validates tokens with audience "auth-target"
+
+---
+# Namespace for AuthBridge demo
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: authbridge
+
+---
+# ServiceAccount for the caller pod
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: caller
+  namespace: authbridge
 
 ---
 # Shared ConfigMap for environment variables
@@ -22,6 +37,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: authbridge-config
+  namespace: authbridge
 data:
   SPIRE_ENABLED: "true"
   KEYCLOAK_URL: "http://keycloak-service.keycloak.svc:8080"
@@ -37,6 +53,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: spiffe-helper-config
+  namespace: authbridge
 data:
   helper.conf: |
     agent_address = "/spiffe-workload-api/spire-agent.sock"
@@ -55,6 +72,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: envoy-config
+  namespace: authbridge
 data:
   envoy.yaml: |
     admin:
@@ -160,12 +178,13 @@ data:
 ---
 # =============================================================================
 # CALLER POD
-# Contains: BusyBox (caller), SPIFFE Helper, Client Registration, AuthProxy
+# Contains: Caller, SPIFFE Helper, Client Registration, AuthProxy
 # =============================================================================
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: caller
+  namespace: authbridge
   labels:
     app: caller
 spec:
@@ -182,6 +201,7 @@ spec:
         ambient.istio.io/redirection: disabled
         sidecar.istio.io/inject: "false"
     spec:
+      serviceAccountName: caller
       imagePullSecrets:
         - name: ghcr-secret
       initContainers:
@@ -284,9 +304,9 @@ spec:
               mountPath: /shared
             - name: svid-output
               mountPath: /opt
-        # Caller - the calling application (uses alpine with curl and jq)
-        # Use: kubectl exec -it deployment/caller -c caller -- sh
-        # Then: curl -H "Authorization: Bearer $TOKEN" http://demo-app-service:8081/test
+        # Caller - the calling application (uses netshoot with curl and jq)
+        # Use: kubectl exec -it deployment/caller -n authbridge -c caller -- sh
+        # Then: curl -H "Authorization: Bearer $TOKEN" http://auth-target-service:8081/test
         - name: caller
           image: nicolaka/netshoot:latest
           command:
@@ -319,8 +339,8 @@ spec:
               echo "    -d \"client_id=\$CLIENT_ID\" \\"
               echo "    -d \"client_secret=\$CLIENT_SECRET\" | jq -r '.access_token')"
               echo ""
-              echo "  # Call the demo-app through AuthProxy"
-              echo "  curl -H \"Authorization: Bearer \$TOKEN\" http://demo-app-service:8081/test"
+              echo "  # Call auth-target through AuthProxy"
+              echo "  curl -H \"Authorization: Bearer \$TOKEN\" http://auth-target-service:8081/test"
               echo ""
               # Keep container running
               tail -f /dev/null
@@ -352,7 +372,7 @@ spec:
             - name: PORT
               value: "8080"
             - name: TARGET_SERVICE_URL
-              value: "http://demo-app-service:8081"
+              value: "http://auth-target-service:8081"
             - name: ISSUER
               value: "http://keycloak.localtest.me:8080/realms/demo"
             - name: JWKS_URL
@@ -435,27 +455,28 @@ spec:
 
 ---
 # =============================================================================
-# DEMO APP POD (Target Server)
-# Validates tokens with audience "demoapp"
+# AUTH TARGET POD (Target Server)
+# Validates tokens with audience "auth-target"
 # =============================================================================
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: demo-app
+  name: auth-target
+  namespace: authbridge
   labels:
-    app: demo-app
+    app: auth-target
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: demo-app
+      app: auth-target
   template:
     metadata:
       labels:
-        app: demo-app
+        app: auth-target
     spec:
       containers:
-        - name: demo-app
+        - name: auth-target
           image: localhost/demo-app:latest
           imagePullPolicy: IfNotPresent
           ports:
@@ -465,9 +486,9 @@ spec:
               value: "http://keycloak.localtest.me:8080/realms/demo"
             - name: JWKS_URL
               value: "http://keycloak-service.keycloak.svc.cluster.local:8080/realms/demo/protocol/openid-connect/certs"
-            # Demo app expects tokens with "demoapp" audience
+            # Auth Target expects tokens with "auth-target" audience
             - name: AUDIENCE
-              value: "demoapp"
+              value: "auth-target"
           resources:
             requests:
               memory: "64Mi"
@@ -477,13 +498,14 @@ spec:
               cpu: "500m"
 
 ---
-# Demo App Service
+# Auth Target Service
 apiVersion: v1
 kind: Service
 metadata:
-  name: demo-app-service
+  name: auth-target-service
+  namespace: authbridge
   labels:
-    app: demo-app
+    app: auth-target
 spec:
   type: ClusterIP
   ports:
@@ -492,4 +514,4 @@ spec:
       protocol: TCP
       name: http
   selector:
-    app: demo-app
+    app: auth-target
