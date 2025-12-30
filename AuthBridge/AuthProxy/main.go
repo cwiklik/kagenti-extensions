@@ -38,9 +38,12 @@ func main() {
 		log.Fatal("ISSUER environment variable is required")
 	}
 
+	// AUDIENCE is optional - if not set, any valid token is accepted
+	// This makes the proxy transparent: it validates signature/issuer only
+	// and relies on token exchange to set the correct audience for the target
 	audience := os.Getenv("AUDIENCE")
 	if audience == "" {
-		log.Fatal("AUDIENCE environment variable is required")
+		log.Printf("AUDIENCE not configured - accepting any valid token (transparent mode)")
 	}
 
 	// Initialize JWKS cache
@@ -56,7 +59,11 @@ func main() {
 	log.Printf("Auth proxy starting on port %s", proxyPort)
 	log.Printf("JWKS URL: %s", jwksURL)
 	log.Printf("Expected issuer: %s", issuer)
-	log.Printf("Expected audience: %s", audience)
+	if audience != "" {
+		log.Printf("Expected audience: %s", audience)
+	} else {
+		log.Printf("Audience: ANY (transparent mode - token exchange will set target audience)")
+	}
 	log.Printf("Forwarding authorized requests to %s", targetServiceURL)
 	log.Fatal(http.ListenAndServe(proxyPort, nil))
 }
@@ -81,17 +88,22 @@ func validateJWT(tokenString, jwksURL, expectedIssuer, expectedAudience string) 
 		return fmt.Errorf("invalid issuer: expected %s, got %s", expectedIssuer, token.Issuer())
 	}
 
-	// Validate audience claim
+	// Validate audience claim (only if expectedAudience is configured)
 	audiences := token.Audience()
-	validAudience := false
-	for _, aud := range audiences {
-		if aud == expectedAudience {
-			validAudience = true
-			break
+	if expectedAudience != "" {
+		validAudience := false
+		for _, aud := range audiences {
+			if aud == expectedAudience {
+				validAudience = true
+				break
+			}
 		}
-	}
-	if !validAudience {
-		return fmt.Errorf("invalid audience: expected %s, got %v", expectedAudience, audiences)
+		if !validAudience {
+			return fmt.Errorf("invalid audience: expected %s, got %v", expectedAudience, audiences)
+		}
+		log.Printf("[JWT Debug] Audience validated: %s", expectedAudience)
+	} else {
+		log.Printf("[JWT Debug] Audience validation skipped (transparent mode)")
 	}
 
 	// Log JWT claims for debugging

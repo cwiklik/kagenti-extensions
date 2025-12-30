@@ -362,9 +362,9 @@ spec:
               value: "http://keycloak.localtest.me:8080/realms/demo"
             - name: JWKS_URL
               value: "http://keycloak-service.keycloak.svc.cluster.local:8080/realms/demo/protocol/openid-connect/certs"
-            # AuthProxy accepts tokens with "authproxy" audience
-            - name: AUDIENCE
-              value: "authproxy"
+            # Transparent mode: no AUDIENCE validation
+            # AuthProxy accepts any valid token (validates signature + issuer only)
+            # and exchanges it for auth-target audience
           resources:
             limits:
               cpu: 500m
