@@ -19,44 +19,44 @@ The AuthBridge demo showcases a complete **zero-trust authentication flow** for 
 ### End-to-End Flow
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│  1. SPIFFE Helper obtains SVID from SPIRE Agent                                 │
-│  2. Client Registration extracts SPIFFE ID and registers with Keycloak          │
-│  3. Caller gets token from Keycloak (audience: "authproxy")                     │
-│  4. Caller sends request to auth-target with token                              │
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│  1. SPIFFE Helper obtains SVID from SPIRE Agent                                     │
+│  2. Client Registration extracts SPIFFE ID and registers with Keycloak              │
+│  3. Caller gets token from Keycloak (audience: "authproxy")                         │
+│  4. Caller sends request to auth-target with token                                  │
 │  5. Envoy intercepts request, Go Processor exchanges token (audience: "auth-target")│
-│  6. Auth Target validates token and returns "authorized"                         │
-└─────────────────────────────────────────────────────────────────────────────────┘
+│  6. Auth Target validates token and returns "authorized"                            │
+└─────────────────────────────────────────────────────────────────────────────────────┘
 
-  SPIRE Agent                    Keycloak                      Auth Target
-       │                            │                              │
-       │  1. SVID                   │                              │
-       ▼                            │                              │
-  ┌─────────┐                       │                              │
-  │ SPIFFE  │  2. Register client   │                              │
-  │ Helper  │──────────────────────►│                              │
-  └─────────┘                       │                              │
-       │                            │                              │
-       ▼                            │                              │
-  ┌─────────┐  3. Get token         │                              │
-  │ Caller  │──────────────────────►│                              │
-  │         │◄──────────────────────│                              │
-  │         │   (aud: authproxy)    │                              │
-  │         │                       │                              │
-  │         │  4. Request + token   │                              │
-  │         │───────────────────────┼─────────────────────────────►│
-  └─────────┘                       │                              │
-       │                            │                              │
-       │      ┌──────────────┐      │                              │
-       └─────►│ Envoy+GoPro  │      │                              │
-              │              │  5. Exchange token                  │
-              │              │─────►│                              │
-              │              │◄─────│                              │
-              │              │   (aud: auth-target)                │
+  SPIRE Agent                    Keycloak                       Auth Target
+       │                            │                               │
+       │  1. SVID                   │                               │
+       ▼                            │                               │
+  ┌─────────┐                       │                               │
+  │ SPIFFE  │  2. Register client   │                               │
+  │ Helper  │──────────────────────►│                               │
+  └─────────┘                       │                               │
+       │                            │                               │
+       ▼                            │                               │
+  ┌─────────┐  3. Get token         │                               │
+  │ Caller  │──────────────────────►│                               │
+  │         │◄──────────────────────│                               │
+  │         │   (aud: authproxy)    │                               │
+  │         │                       │                               │
+  │         │  4. Request + token   │                               │
+  │         │───────────────────────┼──────────────────────────────►│
+  └─────────┘                       │                               │
+       │                            │                               │
+       │      ┌──────────────┐      │                               │
+       └─────►│ Envoy+GoPro  │      │                               │
+              │              │  5. Exchange token                   │
+              │              │─────►│                               │
+              │              │◄─────│                               │
+              │              │   (aud: auth-target)                 │
               │              │─────────────────────────────────────►│
               └──────────────┘                              6. Validate & Authorize
-                                                                   │
-                                                            "authorized"
+                                                                    │
+                                                               "authorized"
 ```
 
 <details>
@@ -105,7 +105,7 @@ sequenceDiagram
 | 3 | Caller | Token received with `aud: authproxy` |
 | 4 | Envoy + Go Processor | Token exchanged successfully |
 | 5 | Auth Target | Token validated with `aud: auth-target` |
-| 6 | End-to-End | Response: `"authorized"` |
+| 6 | *End-to-End* | Response: `"authorized"` |
 
 ### Key Security Properties
 
@@ -235,6 +235,8 @@ The easiest way to get all prerequisites is to use the [Kagenti Ansible installe
 
 ### Step 1: Build and Load AuthProxy Images
 
+*Note: This step will be replaced by the CI pipeline. The images will be auto-created*
+
 ```bash
 cd AuthBridge/AuthProxy
 
@@ -245,9 +247,21 @@ make build-images
 make load-images
 ```
 
-### Step 2: Configure Keycloak
+### Step 2: Setup AuthBridge Namespace, ServiceAccount, and Config
 
-Port-forward Keycloak to access it locally:
+```bash
+kubectl apply -f k8s/auth-proxy-config.yaml
+```
+
+This creates:
+
+- `authbridge` namespace
+- `caller` ServiceAccount
+- `auth-proxy-config` secret for accessing Keycloak
+
+### Step 3: Configure Keycloak
+
+Assuming Keycloak is running as a part fo the Kagenti install, port-forward Keycloak to access it locally:
 
 ```bash
 kubectl port-forward service/keycloak-service -n keycloak 8080:8080
@@ -270,7 +284,8 @@ pip install -r requirements.txt
 python setup_keycloak.py
 ```
 
-The script creates:
+The `setup_keycloak` script creates:
+
 - `demo` realm
 - `authproxy` client (for token exchange)
 - `auth-target` client (token exchange target audience)
@@ -279,7 +294,26 @@ The script creates:
 
 **Important:** Copy the `authproxy` client secret from the output.
 
-### Step 3: Deploy the Demo
+### Step 4: Update the Secret
+
+```bash
+# IMPORTANT: Update with the actual authproxy client secret from Step 3
+# Copy the secret value from the setup_keycloak.py output
+kubectl patch secret auth-proxy-config -n authbridge -p '{"stringData":{"CLIENT_SECRET":"YOUR_AUTHPROXY_SECRET_HERE"}}'
+
+# Verify it was updated (should NOT show REPLACE_WITH_AUTHPROXY_SECRET)
+kubectl get secret auth-proxy-config -n authbridge -o jsonpath='{.data.CLIENT_SECRET}' | base64 -d && echo
+```
+
+### Step 5: Configure GitHub Image Pull Secret (if needed)
+
+If using Kagenti, copy the ghcr secret:
+
+```bash
+kubectl get secret ghcr-secret -n team1 -o yaml | sed 's/namespace: team1/namespace: authbridge/' | kubectl apply -f -
+```
+
+### Step 6: Deploy the Demo
 
 ```bash
 cd AuthBridge
@@ -293,43 +327,17 @@ kubectl apply -f k8s/authbridge-deployment-no-spiffe.yaml
 
 This creates:
 
-- `authbridge` namespace
-- `caller` ServiceAccount
 - ConfigMaps and Secrets
 - `caller` and `auth-target` deployments
 
-### Step 4: Update the Secret
-
-```bash
-kubectl apply -f k8s/auth-proxy-config.yaml 
-
-# IMPORTANT: Update with the actual authproxy client secret from Step 2
-# Copy the secret value from the setup_keycloak.py output
-kubectl patch secret auth-proxy-config -n authbridge -p '{"stringData":{"CLIENT_SECRET":"YOUR_AUTHPROXY_SECRET_HERE"}}'
-
-# Verify it was updated (should NOT show REPLACE_WITH_AUTHPROXY_SECRET)
-kubectl get secret auth-proxy-config -n authbridge -o jsonpath='{.data.CLIENT_SECRET}' | base64 -d && echo
-
-# Restart the caller pod to pick up the new secret
-kubectl delete pod -l app=caller -n authbridge
-```
-
-### Step 5: Configure Image Pull Secret (if needed)
-
-If using Kagenti, copy the ghcr secret:
-
-```bash
-kubectl get secret ghcr-secret -n team1 -o yaml | sed 's/namespace: team1/namespace: authbridge/' | kubectl apply -f -
-```
-
-### Step 6: Wait for Deployments
+### Step 7: Wait for Deployments
 
 ```bash
 kubectl wait --for=condition=available --timeout=180s deployment/caller -n authbridge
 kubectl wait --for=condition=available --timeout=120s deployment/auth-target -n authbridge
 ```
 
-### Step 7: Test the Flow
+### Step 8: Test the Flow
 
 ```bash
 # Exec into the caller container
@@ -376,7 +384,7 @@ echo "Result: $(curl -s -H "Authorization: Bearer $TOKEN" http://auth-target-ser
 '
 ```
 
-### Step 8: Inspect Token Claims (Before and After Exchange)
+### Step 9: Inspect Token Claims (Before and After Exchange)
 
 This step shows how the token claims change during the exchange process.
 

@@ -19,7 +19,7 @@ Traditional OAuth2 authentication requires:
 │   Admin         │         │    Keycloak     │
 │                 │─────────│                 │
 │ 1. Create client│  Manual │ Client: svc-a   │
-│ 2. Copy secret  │ Process │ Secret: xxx     │
+│ 2. Copy secret  │ Process │ Secret: <secret>│
 │ 3. Create K8s   │         │                 │
 │    secret       │         │                 │
 └─────────────────┘         └─────────────────┘
@@ -42,8 +42,8 @@ Client Registration automates this entire process:
 │  │  SPIFFE Helper  │───►│ Client          │───►│   Application   │  │
 │  │  (gets SVID)    │    │ Registration    │    │   (uses secret) │  │
 │  └─────────────────┘    └────────┬────────┘    └─────────────────┘  │
-│                                  │                                   │
-└──────────────────────────────────┼───────────────────────────────────┘
+│                                  │                                  │
+└──────────────────────────────────┼──────────────────────────────────┘
                                    │
                     ┌──────────────▼──────────────┐
                     │         Keycloak            │

@@ -17,21 +17,6 @@
 #   - Validates tokens with audience "auth-target"
 
 ---
-# Namespace for AuthBridge demo
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: authbridge
-
----
-# ServiceAccount for the caller pod
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: caller
-  namespace: authbridge
-
----
 # Shared ConfigMap for environment variables
 apiVersion: v1
 kind: ConfigMap

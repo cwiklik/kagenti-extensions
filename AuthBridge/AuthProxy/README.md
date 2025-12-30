@@ -12,7 +12,7 @@ When a Caller obtains a token from another service, the token is scoped to a spe
 If the Caller wants to pass the same token to a different service, the request will be rejected, since the service would expect
 a different audience.
 
-```cmd
+```
 ┌─────────────┐                      ┌──────────────┐
 │   Caller    │ ── Token A ────────► │   Target     │  ❌ REJECTED
 │ (aud: svc-a)│                      │ (expects     │     Wrong audience!
@@ -24,7 +24,7 @@ a different audience.
 
 AuthProxy intercepts outgoing requests, validates the caller's token, and exchanges it for a new token with the correct audience:
 
-```cmd
+```
 ┌─────────────┐               ┌──────────────────────────┐              ┌─────────────┐
 │   Caller    │ ── Token A ──►│       AuthProxy          │- Token B ──► │   Target    │  ✅ AUTHORIZED
 │             │               │  1. Validate token       │              │             │
@@ -84,7 +84,7 @@ An Envoy external processor (gRPC) that:
 
 When deployed as a sidecar, AuthProxy intercepts all outgoing traffic from the application:
 
-```cmd
+```
 ┌─────────────────────────────────────────────────────────────────┐
 │                         POD                                     │
 │  ┌──────────────┐    ┌─────────────────────────────────────┐    │
@@ -113,7 +113,7 @@ When deployed as a sidecar, AuthProxy intercepts all outgoing traffic from the a
 
 AuthProxy can also be deployed as a standalone service for validating incoming requests:
 
-```cmd
+```
 Client ──► AuthProxy (validates token) ──► Target Service
 ```
 

@@ -1,3 +1,20 @@
+# AuthBridge Setup
+---
+# Namespace for AuthBridge demo
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: authbridge
+
+---
+# ServiceAccount for the caller pod
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: caller
+  namespace: authbridge
+
+---
 # AuthProxy configuration secret
 # Update CLIENT_SECRET with the value from setup_keycloak.py output
 apiVersion: v1
