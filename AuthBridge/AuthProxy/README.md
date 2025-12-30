@@ -8,33 +8,35 @@ AuthProxy solves a common challenge in microservices architectures: **how can a 
 
 ### The Problem
 
-```
+When a Caller obtains a token from another service, the token is scoped to a specific audience, most likely for itself.
+If the Caller wants to pass the same token to a different service, the request will be rejected, since the service would expect
+a different audience.
+
+```cmd
 ┌─────────────┐                      ┌─────────────┐
 │   Caller    │ ── Token A ──────────│   Target    │  ❌ REJECTED
-│ (aud: svc-a)│    (aud: authproxy)  │ (expects    │     Wrong audience!
+│ (aud: svc-a)│    (aud: svc-a ).    │ (expects    │     Wrong audience!
 └─────────────┘                      │  aud: svc-b)│
                                      └─────────────┘
 ```
-
-When a caller obtains a token from an identity provider, the token is scoped to a specific audience. If the caller wants to access a different service that expects a different audience, the request will be rejected.
 
 ### The Solution
 
 AuthProxy intercepts outgoing requests, validates the caller's token, and exchanges it for a new token with the correct audience:
 
-```
-┌─────────────┐     ┌──────────────────────────┐     ┌─────────────┐
-│   Caller    │ ──► │       AuthProxy          │ ──► │   Target    │  ✅ AUTHORIZED
-│             │     │  1. Validate token       │     │             │
-│ Token:      │     │  2. Exchange for new aud │     │ Expects:    │
-│ aud=authproxy     │  3. Forward request      │     │ aud=target  │
-└─────────────┘     └──────────────────────────┘     └─────────────┘
-                              │
-                              ▼
-                    ┌─────────────────┐
-                    │    Keycloak     │
-                    │ (Token Exchange)│
-                    └─────────────────┘
+```cmd
+┌─────────────┐               ┌──────────────────────────┐              ┌─────────────┐
+│   Caller    │ --Token A ──► │       AuthProxy          │ -Token B ──► │   Target    │  ✅ AUTHORIZED
+│             │               │  1. Validate token       │              │             │
+│ Token:      │               │  2. Exchange for new aud │              │ Expects:    │
+│ (aud: svc-a)│               |  3. Forward request      │              │ aud=target  │
+└─────────────┘               └──────────────────────────┘              └─────────────┘
+                                           │
+                                           ▼
+                                  ┌─────────────────┐
+                                  │    Keycloak     │
+                                  │ (Token Exchange)│
+                                  └─────────────────┘
 ```
 
 ## Components
