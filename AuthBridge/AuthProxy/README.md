@@ -57,7 +57,7 @@ A Go HTTP proxy that:
 |----------|-------------|---------|
 | `JWKS_URL` | URL to fetch public keys for JWT validation | `http://keycloak:8080/realms/demo/.../certs` |
 | `ISSUER` | Expected token issuer | `http://keycloak:8080/realms/demo` |
-| `AUDIENCE` | Expected token audience | `authproxy` |
+| `AUDIENCE` | Expected token audience for AuthProxy | `authproxy` |
 | `TARGET_SERVICE_URL` | URL to forward requests to | `http://target-service:8081` |
 
 ### 2. Go External Processor (`go-processor/main.go`)
