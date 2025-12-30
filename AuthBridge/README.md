@@ -261,7 +261,7 @@ This creates:
 
 ### Step 3: Configure Keycloak
 
-Assuming Keycloak is running as a part fo the Kagenti install, port-forward Keycloak to access it locally:
+Assuming Keycloak is running as a part of the Kagenti install, port-forward Keycloak to access it locally:
 
 ```bash
 kubectl port-forward service/keycloak-service -n keycloak 8080:8080
