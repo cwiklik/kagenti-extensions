@@ -69,10 +69,7 @@ This will spit out a command to export the `CLIENT_SECRET`. Run this command.
 
 ## Step 4: Test the Flow
 
-First let's get the client secret:
-
-First, let's obtain an initial access token using the following command: 
-
+Using the exported `CLIENT_SECRET` environment variable, obtain an initial access token with the following command: 
 ```
 export ACCESS_TOKEN=$(curl -sX POST -H "Content-Type: application/x-www-form-urlencoded" -d "client_secret=$CLIENT_SECRET" -d "grant_type=password" -d "client_id=application-caller" -d "username=test-user" -d "password=password" "http://keycloak.localtest.me:8080/realms/demo/protocol/openid-connect/token" | jq -r '.access_token')
 ```
@@ -85,8 +82,9 @@ curl -H "Authorization: Bearer $ACCESS_TOKEN" http://localhost:9090/test
 # Expected response: "authorized"
 ```
 
-**Invalid request (will be rejected by proxy):** Consider using an expired token
+**Invalid request (will be rejected by proxy):** Use an invalid token, for example by setting `SOME_OTHER_TOKEN` to a random string, a malformed JWT, or a token issued for a different client/user.
 ```bash
+export SOME_OTHER_TOKEN="invalid-or-expired-token-value"
 curl -H "Authorization: Bearer $SOME_OTHER_TOKEN" http://localhost:9090/test
 # Expected response: "Unauthorized - invalid token"
 ```
