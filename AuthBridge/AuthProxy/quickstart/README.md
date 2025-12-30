@@ -82,8 +82,9 @@ curl -H "Authorization: Bearer $ACCESS_TOKEN" http://localhost:9090/test
 # Expected response: "authorized"
 ```
 
-**Invalid request (will be rejected by proxy):** Consider using an expired token
+**Invalid request (will be rejected by proxy):** Use an invalid token, for example by setting `SOME_OTHER_TOKEN` to a random string, a malformed JWT, or a token issued for a different client/user.
 ```bash
+export SOME_OTHER_TOKEN="invalid-or-expired-token-value"
 curl -H "Authorization: Bearer $SOME_OTHER_TOKEN" http://localhost:9090/test
 # Expected response: "Unauthorized - invalid token"
 ```
