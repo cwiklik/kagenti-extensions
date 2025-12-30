@@ -1,4 +1,4 @@
-from keycloak import KeycloakAdmin, KeycloakGetError
+from keycloak import KeycloakAdmin, KeycloakGetError, KeycloakPostError
 
 KEYCLOAK_URL = "http://keycloak.localtest.me:8080"
 KEYCLOAK_REALM = "demo"
@@ -62,16 +62,7 @@ def add_audience_mapper(keycloak_admin, scope_id, mapper_name, audience):
     """
     Adds an audience protocol mapper to a client scope if it doesn't already exist.
     """
-    # Check if mapper exists to avoid duplicates/errors
-    """
-    try:
-        mappers = keycloak_admin.get_client_scope_mappers(scope_id)
-        if any(m['name'] == mapper_name for m in mappers):
-            print(f"Mapper '{mapper_name}' already exists in scope.")
-            return
-    except KeycloakGetError:
-        pass # Scope might be new or empty
-    """
+    # Note: we do not pre-check for existing mappers here; Keycloak will handle duplicates or raise errors.
 
     mapper_payload = {
         "name": mapper_name,

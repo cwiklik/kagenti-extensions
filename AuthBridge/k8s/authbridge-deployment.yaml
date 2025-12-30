@@ -1,0 +1,517 @@
+# AuthBridge Demo Deployment (with SPIFFE)
+# 
+# This deployment demonstrates:
+# 1. Caller pod with automatic client registration using SPIFFE ID
+# 2. AuthProxy sidecar intercepts outgoing requests and exchanges tokens
+# 3. Auth Target (target server) validates the exchanged tokens
+#
+# Flow: Caller -> AuthProxy (sidecar, exchanges token) -> Auth Target (validates token)
+#
+# Pod 1: Caller Pod
+#   - Caller: The calling application
+#   - SPIFFE Helper: Provides SPIFFE credentials (SVID)
+#   - Client Registration: Registers caller with Keycloak using SPIFFE ID
+#   - AuthProxy + Envoy: Intercepts outgoing traffic and exchanges tokens
+#
+# Pod 2: Auth Target (Target Server)
+#   - Validates tokens with audience "auth-target"
+
+---
+# Namespace for AuthBridge demo
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: authbridge
+
+---
+# ServiceAccount for the caller pod
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: caller
+  namespace: authbridge
+
+---
+# Shared ConfigMap for environment variables
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: authbridge-config
+  namespace: authbridge
+data:
+  SPIRE_ENABLED: "true"
+  KEYCLOAK_URL: "http://keycloak-service.keycloak.svc:8080"
+  KEYCLOAK_REALM: "demo"
+  KEYCLOAK_ADMIN_USERNAME: "admin"
+  KEYCLOAK_ADMIN_PASSWORD: "admin"
+  KEYCLOAK_TOKEN_EXCHANGE_ENABLED: "true"
+  KEYCLOAK_CLIENT_REGISTRATION_ENABLED: "true"
+
+---
+# SPIFFE Helper configuration for the caller pod
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: spiffe-helper-config
+  namespace: authbridge
+data:
+  helper.conf: |
+    agent_address = "/spiffe-workload-api/spire-agent.sock"
+    cmd = ""
+    cmd_args = ""
+    svid_file_name = "/opt/svid.pem"
+    svid_key_file_name = "/opt/svid_key.pem"
+    svid_bundle_file_name = "/opt/svid_bundle.pem"
+    jwt_svids = [{jwt_audience="kagenti", jwt_svid_file_name="/opt/jwt_svid.token"}]
+    jwt_svid_file_mode = 0644
+    include_federated_domains = true
+
+---
+# Envoy configuration for AuthProxy
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: envoy-config
+  namespace: authbridge
+data:
+  envoy.yaml: |
+    admin:
+      address:
+        socket_address:
+          protocol: TCP
+          address: 127.0.0.1
+          port_value: 9901
+
+    static_resources:
+      listeners:
+      - name: outbound_listener
+        address:
+          socket_address:
+            protocol: TCP
+            address: 0.0.0.0
+            port_value: 15123
+        listener_filters:
+        - name: envoy.filters.listener.original_dst
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.filters.listener.original_dst.v3.OriginalDst
+        filter_chains:
+        - filters:
+          - name: envoy.filters.network.http_connection_manager
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+              stat_prefix: outbound_http
+              codec_type: AUTO
+              route_config:
+                name: outbound_routes
+                virtual_hosts:
+                - name: catch_all
+                  domains: ["*"]
+                  routes:
+                  - match:
+                      prefix: "/"
+                    route:
+                      cluster: original_destination
+              http_filters:
+              # Lua filter to inject environment variables as headers
+              - name: envoy.filters.http.lua
+                typed_config:
+                  "@type": type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
+                  inline_code: |
+                    function envoy_on_request(request_handle)
+                      local token_url = os.getenv("TOKEN_URL")
+                      local client_id = os.getenv("CLIENT_ID")
+                      local client_secret = os.getenv("CLIENT_SECRET")
+                      local target_audience = os.getenv("TARGET_AUDIENCE")
+                      local target_scopes = os.getenv("TARGET_SCOPES")
+
+                      if token_url ~= nil and token_url ~= "" then
+                        request_handle:headers():add("x-token-url", token_url)
+                      end
+                      if client_id ~= nil and client_id ~= "" then
+                        request_handle:headers():add("x-client-id", client_id)
+                      end
+                      if client_secret ~= nil and client_secret ~= "" then
+                        request_handle:headers():add("x-client-secret", client_secret)
+                      end
+                      if target_audience ~= nil and target_audience ~= "" then
+                        request_handle:headers():add("x-target-audience", target_audience)
+                      end
+                      if target_scopes ~= nil and target_scopes ~= "" then
+                        request_handle:headers():add("x-target-scopes", target_scopes)
+                      end
+                    end
+              # External processor to mutate headers (token exchange)
+              - name: envoy.filters.http.ext_proc
+                typed_config:
+                  "@type": type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExternalProcessor
+                  grpc_service:
+                    envoy_grpc:
+                      cluster_name: go_processor
+                  processing_mode:
+                    request_header_mode: SEND
+                    response_header_mode: SEND
+                    request_body_mode: NONE
+                    response_body_mode: NONE
+              - name: envoy.filters.http.router
+                typed_config:
+                  "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+
+      clusters:
+      - name: go_processor
+        type: STATIC
+        http2_protocol_options: {}
+        lb_policy: ROUND_ROBIN
+        load_assignment:
+          cluster_name: go_processor
+          endpoints:
+          - lb_endpoints:
+            - endpoint:
+                address:
+                  socket_address:
+                    address: 127.0.0.1
+                    port_value: 9090
+
+      - name: original_destination
+        type: ORIGINAL_DST
+        lb_policy: CLUSTER_PROVIDED
+
+---
+# =============================================================================
+# CALLER POD
+# Contains: Caller, SPIFFE Helper, Client Registration, AuthProxy
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: caller
+  namespace: authbridge
+  labels:
+    app: caller
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: caller
+  template:
+    metadata:
+      labels:
+        app: caller
+        istio.io/dataplane-mode: none
+      annotations:
+        ambient.istio.io/redirection: disabled
+        sidecar.istio.io/inject: "false"
+    spec:
+      serviceAccountName: caller
+      imagePullSecrets:
+        - name: ghcr-secret
+      initContainers:
+        # Init container to set up iptables for traffic interception
+        - name: proxy-init
+          image: localhost/proxy-init:latest
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            capabilities:
+              add:
+                - NET_ADMIN
+                - NET_RAW
+            runAsNonRoot: false
+            runAsUser: 0
+          env:
+            - name: PROXY_PORT
+              value: "15123"
+            - name: PROXY_UID
+              value: "1337"
+            - name: OUTBOUND_PORTS_EXCLUDE
+              value: "8080"  # Exclude Keycloak port from iptables redirect
+          resources:
+            limits:
+              cpu: 10m
+              memory: 10Mi
+            requests:
+              cpu: 10m
+              memory: 10Mi
+      containers:
+        # Client registration - registers caller with Keycloak using SPIFFE ID
+        # Runs as a container (not init) because it needs SPIFFE Helper to be running
+        - name: client-registration
+          image: ghcr.io/kagenti/kagenti-extensions/client-registration:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Waiting for SPIFFE credentials..."
+              while [ ! -f /opt/jwt_svid.token ]; do
+                echo "Waiting for SVID..."
+                sleep 2
+              done
+              echo "SPIFFE credentials ready!"
+              
+              # Extract and save the client ID (SPIFFE ID) from the JWT
+              # JWT format: header.payload.signature - we need the payload
+              JWT_PAYLOAD=$(cat /opt/jwt_svid.token | cut -d'.' -f2)
+              # Add padding if needed and decode
+              CLIENT_ID=$(echo "$JWT_PAYLOAD"== | base64 -d 2>/dev/null | python -c "import sys,json; print(json.load(sys.stdin).get('sub',''))")
+              echo "$CLIENT_ID" > /shared/client-id.txt
+              echo "Client ID (SPIFFE ID): $CLIENT_ID"
+              
+              echo "Starting client registration..."
+              python client_registration.py
+              echo "Client registration complete!"
+              echo "Staying alive to keep pod running..."
+              tail -f /dev/null
+          env:
+            - name: SPIRE_ENABLED
+              valueFrom:
+                configMapKeyRef:
+                  name: authbridge-config
+                  key: SPIRE_ENABLED
+            - name: KEYCLOAK_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: authbridge-config
+                  key: KEYCLOAK_URL
+            - name: KEYCLOAK_REALM
+              valueFrom:
+                configMapKeyRef:
+                  name: authbridge-config
+                  key: KEYCLOAK_REALM
+            - name: KEYCLOAK_ADMIN_USERNAME
+              valueFrom:
+                configMapKeyRef:
+                  name: authbridge-config
+                  key: KEYCLOAK_ADMIN_USERNAME
+            - name: KEYCLOAK_ADMIN_PASSWORD
+              valueFrom:
+                configMapKeyRef:
+                  name: authbridge-config
+                  key: KEYCLOAK_ADMIN_PASSWORD
+            - name: KEYCLOAK_TOKEN_EXCHANGE_ENABLED
+              valueFrom:
+                configMapKeyRef:
+                  name: authbridge-config
+                  key: KEYCLOAK_TOKEN_EXCHANGE_ENABLED
+            - name: KEYCLOAK_CLIENT_REGISTRATION_ENABLED
+              valueFrom:
+                configMapKeyRef:
+                  name: authbridge-config
+                  key: KEYCLOAK_CLIENT_REGISTRATION_ENABLED
+            - name: CLIENT_NAME
+              value: caller
+            - name: SECRET_FILE_PATH
+              value: /shared/client-secret.txt
+          volumeMounts:
+            - name: shared-data
+              mountPath: /shared
+            - name: svid-output
+              mountPath: /opt
+        # Caller - the calling application (uses netshoot with curl and jq)
+        # Use: kubectl exec -it deployment/caller -n authbridge -c caller -- sh
+        # Then: curl -H "Authorization: Bearer $TOKEN" http://auth-target-service:8081/test
+        - name: caller
+          image: nicolaka/netshoot:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Caller pod ready!"
+              echo "Waiting for client registration to complete..."
+              while [ ! -f /shared/client-secret.txt ] || [ ! -f /shared/client-id.txt ]; do
+                sleep 2
+              done
+              
+              CLIENT_ID=$(cat /shared/client-id.txt)
+              CLIENT_SECRET=$(cat /shared/client-secret.txt)
+              
+              echo ""
+              echo "============================================"
+              echo "Client registered with Keycloak!"
+              echo "Client ID: $CLIENT_ID"
+              echo "Client Secret: $CLIENT_SECRET"
+              echo "============================================"
+              echo ""
+              echo "To test, exec into this container and run:"
+              echo ""
+              echo "  # Get a token from Keycloak"
+              echo "  CLIENT_ID=\$(cat /shared/client-id.txt)"
+              echo "  CLIENT_SECRET=\$(cat /shared/client-secret.txt)"
+              echo "  TOKEN=\$(curl -sX POST http://keycloak-service.keycloak.svc:8080/realms/demo/protocol/openid-connect/token \\"
+              echo "    -d 'grant_type=client_credentials' \\"
+              echo "    -d \"client_id=\$CLIENT_ID\" \\"
+              echo "    -d \"client_secret=\$CLIENT_SECRET\" | jq -r '.access_token')"
+              echo ""
+              echo "  # Call auth-target through AuthProxy"
+              echo "  curl -H \"Authorization: Bearer \$TOKEN\" http://auth-target-service:8081/test"
+              echo ""
+              # Keep container running
+              tail -f /dev/null
+          volumeMounts:
+            - name: shared-data
+              mountPath: /shared
+        # SPIFFE Helper - provides SPIFFE credentials (SVID)
+        - name: spiffe-helper
+          image: ghcr.io/spiffe/spiffe-helper:nightly
+          command:
+            - /spiffe-helper
+            - -config=/etc/spiffe-helper/helper.conf
+            - run
+          volumeMounts:
+            - name: spiffe-helper-config
+              mountPath: /etc/spiffe-helper
+            - name: spire-agent-socket
+              mountPath: /spiffe-workload-api
+            - name: svid-output
+              mountPath: /opt
+        # AuthProxy - validates and prepares for token exchange
+        - name: auth-proxy
+          image: localhost/auth-proxy:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: PORT
+              value: "8080"
+            - name: TARGET_SERVICE_URL
+              value: "http://auth-target-service:8081"
+            - name: ISSUER
+              value: "http://keycloak.localtest.me:8080/realms/demo"
+            - name: JWKS_URL
+              value: "http://keycloak-service.keycloak.svc.cluster.local:8080/realms/demo/protocol/openid-connect/certs"
+            # AuthProxy accepts tokens with "authproxy" audience
+            - name: AUDIENCE
+              value: "authproxy"
+          resources:
+            limits:
+              cpu: 500m
+              memory: 512Mi
+            requests:
+              cpu: 100m
+              memory: 128Mi
+        # Envoy proxy - intercepts outgoing traffic and performs token exchange
+        - name: envoy-proxy
+          image: localhost/envoy-with-processor:latest
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            runAsUser: 1337
+            runAsGroup: 1337
+          ports:
+            - containerPort: 15123
+              name: envoy-outbound
+            - containerPort: 9901
+              name: envoy-admin
+            - containerPort: 9090
+              name: ext-proc
+          env:
+            - name: TOKEN_URL
+              valueFrom:
+                secretKeyRef:
+                  name: auth-proxy-config
+                  key: TOKEN_URL
+            - name: CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: auth-proxy-config
+                  key: CLIENT_ID
+            - name: CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: auth-proxy-config
+                  key: CLIENT_SECRET
+            - name: TARGET_AUDIENCE
+              valueFrom:
+                secretKeyRef:
+                  name: auth-proxy-config
+                  key: TARGET_AUDIENCE
+            - name: TARGET_SCOPES
+              valueFrom:
+                secretKeyRef:
+                  name: auth-proxy-config
+                  key: TARGET_SCOPES
+          volumeMounts:
+            - name: envoy-config
+              mountPath: /etc/envoy
+              readOnly: true
+          resources:
+            limits:
+              cpu: 200m
+              memory: 256Mi
+            requests:
+              cpu: 50m
+              memory: 64Mi
+      volumes:
+        - name: shared-data
+          emptyDir: {}
+        - name: spiffe-helper-config
+          configMap:
+            name: spiffe-helper-config
+        - name: spire-agent-socket
+          hostPath:
+            path: /run/spire/agent-sockets
+        - name: svid-output
+          emptyDir: {}
+        - name: envoy-config
+          configMap:
+            name: envoy-config
+
+---
+# =============================================================================
+# AUTH TARGET POD (Target Server)
+# Validates tokens with audience "auth-target"
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-target
+  namespace: authbridge
+  labels:
+    app: auth-target
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: auth-target
+  template:
+    metadata:
+      labels:
+        app: auth-target
+    spec:
+      containers:
+        - name: auth-target
+          image: localhost/demo-app:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8081
+          env:
+            - name: ISSUER
+              value: "http://keycloak.localtest.me:8080/realms/demo"
+            - name: JWKS_URL
+              value: "http://keycloak-service.keycloak.svc.cluster.local:8080/realms/demo/protocol/openid-connect/certs"
+            # Auth Target expects tokens with "auth-target" audience
+            - name: AUDIENCE
+              value: "auth-target"
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "250m"
+            limits:
+              memory: "128Mi"
+              cpu: "500m"
+
+---
+# Auth Target Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-target-service
+  namespace: authbridge
+  labels:
+    app: auth-target
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8081
+      targetPort: 8081
+      protocol: TCP
+      name: http
+  selector:
+    app: auth-target

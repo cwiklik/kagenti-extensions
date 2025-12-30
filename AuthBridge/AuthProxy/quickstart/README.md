@@ -13,7 +13,7 @@ The demo goes as follows:
 1. Test the flow
 
 ## Step 1: Install Kagenti
-First, we recommend to deploy Kagenti to a local Kind cluster with the Ansible installer. Instructions are available [here](https://github.com/kagenti/kagenti/blob/main/docs/install.md#ansible-based-installer-alternative). 
+First, we recommend to deploy Kagenti to a local Kind cluster with the Ansible installer. Instructions are available [here](https://github.com/kagenti/kagenti/blob/main/docs/install.md#ansible-based-installer-recommended). 
 
 This should start a local Kind cluster named `kagenti`. 
 
@@ -25,7 +25,7 @@ Let's clone the assets locally:
 
 ```bash
 git clone git@github.com:kagenti/kagenti-extensions.git
-cd kagenti-extensions/AuthBridge/AuthProxy
+cd kagent-extensions/AuthBridge/AuthProxy
 ```
 
 We can use the following `make` commands to build and load the images to the Kind cluster:

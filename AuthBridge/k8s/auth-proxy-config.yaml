@@ -1,0 +1,14 @@
+# AuthProxy configuration secret
+# Update CLIENT_SECRET with the value from setup_keycloak.py output
+apiVersion: v1
+kind: Secret
+metadata:
+  name: auth-proxy-config
+  namespace: authbridge
+type: Opaque
+stringData:
+  TOKEN_URL: "http://keycloak-service.keycloak.svc.cluster.local:8080/realms/demo/protocol/openid-connect/token"
+  CLIENT_ID: "authproxy"
+  CLIENT_SECRET: "REPLACE_WITH_AUTHPROXY_SECRET"
+  TARGET_AUDIENCE: "auth-target"
+  TARGET_SCOPES: "openid auth-target-aud"
