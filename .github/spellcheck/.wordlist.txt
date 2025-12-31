@@ -485,4 +485,3 @@ x86
 yaml
 yml
 zsh
-ブ
