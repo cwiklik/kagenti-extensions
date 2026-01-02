@@ -10,9 +10,9 @@ The AuthBridge demo showcases a complete **zero-trust authentication flow** for 
 
 1. **Automatic Workload Identity** - A pod automatically obtains its identity from SPIFFE/SPIRE and registers itself as a Keycloak client using its SPIFFE ID (e.g., `spiffe://localtest.me/ns/authbridge/sa/caller`)
 
-2. **Token-Based Authentication** - The caller workload authenticates to Keycloak using `client_credentials` grant and receives a JWT access token with its own client ID (SPIFFE ID) as the audience.
+2. **Token-Based Authentication** - The caller workload authenticates to Keycloak using `client_credentials` grant and receives a JWT access token. The token includes `authproxy` in its audience, which authorizes the AuthProxy sidecar to exchange tokens on the caller's behalf.
 
-3. **Transparent Token Exchange** - When the caller makes a request to the target service, an Envoy sidecar (AuthProxy) transparently intercepts the request, validates the token signature and issuer (but **not** the audience), and exchanges the token for one with the correct audience (`auth-target`). The caller doesn't need to know about the proxy.
+3. **Authorized Token Exchange** - When the caller makes a request to the target service, an Envoy sidecar (AuthProxy) intercepts the request, validates the token, and exchanges it for one with the correct audience (`auth-target`). The `authproxy-aud` scope in the token explicitly authorizes this exchange.
 
 4. **Target Service Validation** - The target service validates the exchanged token, ensuring it has the correct audience before authorizing the request
 
@@ -22,7 +22,7 @@ The AuthBridge demo showcases a complete **zero-trust authentication flow** for 
 ┌─────────────────────────────────────────────────────────────────────────────────────────┐
 │  1. SPIFFE Helper obtains SVID from SPIRE Agent                                         │
 │  2. Client Registration extracts SPIFFE ID and registers with Keycloak                  │
-│  3. Caller gets token from Keycloak (audience: caller's SPIFFE ID)                      │
+│  3. Caller gets token from Keycloak (audience: "authproxy" via authproxy-aud scope)     │
 │  4. Caller sends request to auth-target with token                                      │
 │  5. Envoy intercepts request, Go Processor exchanges token (audience: "auth-target")    │
 │  6. Auth Target validates token and returns "authorized"                                │
@@ -41,14 +41,14 @@ The AuthBridge demo showcases a complete **zero-trust authentication flow** for 
   ┌─────────┐  3. Get token         │                               │
   │ Caller  │──────────────────────►│                               │
   │         │◄──────────────────────│                               │
-  │         │ (aud: SPIFFE ID)      │   ← Caller's own identity     │
+  │         │ (aud: authproxy)      │   ← Authorizes proxy          │
   │         │                       │                               │
   │         │  4. Request + token   │                               │
   │         │───────────────────────┼──────────────────────────────►│
   └─────────┘                       │                               │
        │                            │                               │
        │      ┌──────────────┐      │                               │
-       └─────►│ Envoy+GoPro  │      │   ← Transparent proxy         │
+       └─────►│ Envoy+GoPro  │      │   ← Authorized proxy          │
               │              │  5. Exchange token                   │
               │              │─────►│                               │
               │              │◄─────│                               │
@@ -79,12 +79,12 @@ sequenceDiagram
     Reg->>KC: Register client (SPIFFE ID)
     KC-->>Reg: Client credentials
 
-    Note over Caller,Target: Request Flow (Transparent Proxy)
+    Note over Caller,Target: Request Flow (Authorized Proxy)
     Caller->>KC: Get token (client_credentials)
-    KC-->>Caller: Token (aud: caller's SPIFFE ID)
+    KC-->>Caller: Token (aud: authproxy)
     
     Caller->>Envoy: Request + Token
-    Note over Envoy: Transparent - accepts any valid token
+    Note over Envoy: Validates token, authorized via aud claim
     
     Envoy->>KC: Token Exchange
     KC-->>Envoy: New Token (aud: auth-target)
@@ -102,8 +102,8 @@ sequenceDiagram
 |------|-----------|--------------|
 | 1 | SPIFFE Helper | SVID obtained from SPIRE Agent |
 | 2 | Client Registration | Keycloak client created with SPIFFE ID |
-| 3 | Caller | Token received with `aud: <caller's SPIFFE ID>` |
-| 4 | Envoy + Go Processor | Token exchanged successfully (transparent mode) |
+| 3 | Caller | Token received with `aud: authproxy` (via `authproxy-aud` scope) |
+| 4 | Envoy + Go Processor | Token exchanged successfully (authorized by `aud` claim) |
 | 5 | Auth Target | Token validated with `aud: auth-target` |
 | 6 | *End-to-End* | Response: `"authorized"` |
 
@@ -112,7 +112,8 @@ sequenceDiagram
 - **No Static Secrets** - The caller's client credentials are dynamically generated during registration
 - **Short-Lived Tokens** - JWT tokens expire and must be refreshed
 - **Audience Scoping** - Tokens are scoped to specific audiences, preventing token reuse across services
-- **Transparent to Application** - The caller application doesn't need to know about token exchange; it's handled by the sidecar
+- **Explicit Proxy Authorization** - The `authproxy-aud` scope explicitly authorizes which proxies can exchange tokens on behalf of callers
+- **Transparent to Application** - The caller application doesn't need to implement token exchange logic; it's handled by the sidecar
 
 ## Architecture
 
@@ -188,7 +189,7 @@ flowchart TB
     SpiffeHelper --> ClientReg
     ClientReg --> Keycloak
     Caller --> Keycloak
-    Caller -->|"Request + Token<br/>(aud: caller's SPIFFE ID)"| Envoy
+    Caller -->|"Request + Token<br/>(aud: authproxy)"| Envoy
     Envoy --> GoProc
     GoProc -->|"Token Exchange"| Keycloak
     Envoy -->|"Request + Token<br/>(aud: auth-target)"| AuthTarget
@@ -250,6 +251,7 @@ make load-images
 ### Step 2: Setup AuthBridge Namespace, ServiceAccount, and Config
 
 ```bash
+cd AuthBridge/
 kubectl apply -f k8s/auth-proxy-config.yaml
 ```
 
@@ -417,9 +419,9 @@ echo $TOKEN | cut -d'.' -f2 | base64 -d 2>/dev/null | jq '{
 **Expected output:**
 ```json
 {
-  "aud": "account",
+  "aud": "authproxy",
   "azp": "spiffe://localtest.me/ns/authbridge/sa/caller",
-  "scope": "profile email",
+  "scope": "authproxy-aud profile email",
   "iss": "http://keycloak.localtest.me:8080/realms/demo",
   "sub": "...",
   "exp": 1234567890,
@@ -428,9 +430,10 @@ echo $TOKEN | cut -d'.' -f2 | base64 -d 2>/dev/null | jq '{
 ```
 
 Key observations:
-- `aud` - Default Keycloak audience (the caller doesn't need a specific audience)
+- `aud: authproxy` - Authorizes the AuthProxy to exchange this token
 - `azp` - The SPIFFE ID of the caller (authorized party / client ID)
-- **Transparent mode** - AuthProxy accepts this token without requiring a specific audience
+- `scope: authproxy-aud` - The scope that adds `authproxy` to the audience
+- **Security model** - The `authproxy-aud` scope explicitly authorizes token exchange
 
 #### View Exchanged Token Claims (After Exchange)
 
@@ -486,17 +489,20 @@ echo "Run: kubectl logs deployment/auth-target -n authbridge | tail -20"
 
 | Claim | Before Exchange | After Exchange |
 |-------|-----------------|----------------|
-| `aud` | `account` (default) | `auth-target` |
+| `aud` | `authproxy` | `auth-target` |
 | `azp` | SPIFFE ID (caller) | `authproxy` |
-| `scope` | `profile email` | `auth-target-aud` |
+| `scope` | `authproxy-aud profile email` | `auth-target-aud` |
 | `iss` | Keycloak realm | Keycloak realm (same) |
 
-The key change is the **audience (`aud`)** - it transforms from the default audience to `auth-target`, allowing the target service to validate the token.
+The key changes during token exchange:
+- **`aud`** transforms from `authproxy` to `auth-target`, allowing the target service to validate the token
+- **`azp`** changes to `authproxy`, indicating the proxy performed the exchange
 
-**Transparent Mode Benefits:**
-- The caller doesn't need to request a specific audience
-- AuthProxy accepts any valid token from the issuer
-- Token exchange is completely transparent to the calling application
+**Security Model Benefits:**
+- The `authproxy-aud` scope explicitly authorizes which proxies can exchange tokens
+- Only authorized proxies (those in the token's audience) can perform token exchange
+- Clear audit trail - you can see which proxy exchanged the token via the `azp` claim
+- Token exchange logic is handled by the sidecar, transparent to the application code
 
 ## Verification
 
@@ -556,6 +562,39 @@ Authorized request: GET /test
 **Symptom:** `{"error":"invalid_client","error_description":"Audience not found"}`
 
 **Fix:** The `auth-target` client must exist in Keycloak. Run `setup_keycloak.py` which creates it.
+
+### Token Exchange Fails with "Client is not within the token audience"
+
+**Symptom:** Token exchange fails with error:
+```
+{"error":"access_denied","error_description":"Client is not within the token audience"}
+```
+
+**Cause:** The caller's token doesn't include `authproxy` in its audience. Keycloak requires the exchanging client (`authproxy`) to be in the token's audience for security reasons.
+
+**Fix:** Add the `authproxy-aud` scope to the caller client:
+
+```bash
+kubectl exec deployment/caller -n authbridge -c caller -- sh -c '
+ADMIN_TOKEN=$(curl -s http://keycloak-service.keycloak.svc:8080/realms/master/protocol/openid-connect/token \
+  -d "grant_type=password" -d "client_id=admin-cli" -d "username=admin" -d "password=admin" | jq -r ".access_token")
+
+SCOPE_ID=$(curl -s -H "Authorization: Bearer $ADMIN_TOKEN" \
+  "http://keycloak-service.keycloak.svc:8080/admin/realms/demo/client-scopes" | \
+  jq -r ".[] | select(.name==\"authproxy-aud\") | .id")
+
+CLIENT_ID=$(cat /shared/client-id.txt)
+INTERNAL_ID=$(curl -s -H "Authorization: Bearer $ADMIN_TOKEN" \
+  "http://keycloak-service.keycloak.svc:8080/admin/realms/demo/clients?clientId=$CLIENT_ID" | jq -r ".[0].id")
+
+curl -s -X PUT -H "Authorization: Bearer $ADMIN_TOKEN" \
+  "http://keycloak-service.keycloak.svc:8080/admin/realms/demo/clients/$INTERNAL_ID/default-client-scopes/$SCOPE_ID"
+
+echo "Added authproxy-aud scope to $CLIENT_ID"
+'
+```
+
+**Note:** This is a security feature, not a limitation. The `authproxy-aud` scope explicitly authorizes the AuthProxy to exchange tokens on behalf of the caller. This prevents unauthorized proxies from exchanging tokens.
 
 ### Token Exchange Fails with "Client not enabled to retrieve service account"
 

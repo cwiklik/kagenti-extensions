@@ -22,11 +22,13 @@ Clients created:
 - auth-target: Target audience for token exchange (required by Keycloak)
 
 Client Scopes created:
+- authproxy-aud: Adds "authproxy" to token audience (realm default - authorizes proxy)
 - auth-target-aud: Adds "auth-target" to token audience (for exchanged tokens)
 
 Note: The caller client is auto-registered by the client-registration init container
-using the SPIFFE ID as the client ID. The caller's token will have the client ID
-as the audience (transparent mode - no authproxy-aud scope needed).
+using the SPIFFE ID as the client ID. The authproxy-aud scope is added as a realm
+default, so all clients (including auto-registered ones) will have tokens with
+"authproxy" in the audience. This authorizes the AuthProxy to exchange their tokens.
 """
 
 from keycloak import KeycloakAdmin, KeycloakPostError
@@ -178,6 +180,18 @@ def main():
     # Create client scopes
     print("\n--- Creating client scopes ---")
     
+    # authproxy-aud scope - added to all tokens (realm default)
+    # This authorizes the AuthProxy to exchange tokens on behalf of callers
+    authproxy_scope_id = get_or_create_client_scope(keycloak_admin, {
+        "name": "authproxy-aud",
+        "protocol": "openid-connect",
+        "attributes": {
+            "include.in.token.scope": "true",
+            "display.on.consent.screen": "true"
+        }
+    })
+    add_audience_mapper(keycloak_admin, authproxy_scope_id, "authproxy-aud", "authproxy")
+    
     # auth-target-aud scope - added to exchanged tokens
     # This makes the AuthProxy's exchanged token valid for auth-target
     auth_target_scope_id = get_or_create_client_scope(keycloak_admin, {
@@ -193,10 +207,14 @@ def main():
     # Assign scopes
     print("\n--- Assigning scopes ---")
     
-    # Note: We do NOT add any realm default audience scope.
-    # In transparent mode, callers get tokens with their own client ID as audience.
-    # AuthProxy accepts any valid token and exchanges it for auth-target audience.
-    print("Using transparent mode - no realm default audience scope added.")
+    # Add authproxy-aud as realm default scope
+    # This ensures all clients (including auto-registered ones) get tokens with
+    # "authproxy" in the audience, authorizing the AuthProxy to exchange their tokens
+    try:
+        keycloak_admin.add_default_default_client_scope(authproxy_scope_id)
+        print("Added 'authproxy-aud' as realm default scope (all clients will get it).")
+    except Exception as e:
+        print(f"Note: Could not add 'authproxy-aud' as realm default (might already exist): {e}")
     
     # authproxy gets auth-target-aud (so its exchanged tokens target auth-target)
     try:
