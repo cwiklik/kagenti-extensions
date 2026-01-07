@@ -113,47 +113,6 @@ def add_audience_mapper(keycloak_admin, scope_id, mapper_name, audience):
         print(f"Note: Could not add mapper '{mapper_name}' (might already exist): {e}")
 
 
-def add_self_audience_mapper(keycloak_admin, scope_id, mapper_name):
-    """Add a script mapper that adds the client's own ID to its token audience.
-    
-    This enables the AuthProxy (using the same client credentials) to exchange
-    the token, since the exchanging client will be in the token's audience.
-    """
-    # Script that adds the client's own ID to the audience
-    script = """
-// Add the client's own ID to the token audience
-var clientId = keycloakSession.getContext().getClient().getClientId();
-var audiences = token.getAudience();
-if (audiences == null) {
-    audiences = new java.util.HashSet();
-}
-audiences.add(clientId);
-token.audience(audiences.toArray(new java.lang.String[0]));
-"""
-    
-    mapper_payload = {
-        "name": mapper_name,
-        "protocol": "openid-connect",
-        "protocolMapper": "oidc-script-based-protocol-mapper",
-        "consentRequired": False,
-        "config": {
-            "id.token.claim": "false",
-            "access.token.claim": "true",
-            "userinfo.token.claim": "false",
-            "multivalued": "true",
-            "claim.name": "audience",
-            "script": script
-        }
-    }
-    
-    try:
-        keycloak_admin.add_mapper_to_client_scope(scope_id, mapper_payload)
-        print(f"Added self-audience script mapper '{mapper_name}'")
-    except Exception as e:
-        # Mapper might already exist
-        print(f"Note: Could not add script mapper '{mapper_name}' (might already exist): {e}")
-
-
 def main():
     print("=" * 60)
     print("AuthBridge Demo - Keycloak Setup")
