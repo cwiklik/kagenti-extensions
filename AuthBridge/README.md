@@ -345,8 +345,11 @@ cd AuthBridge
 
 # With SPIFFE (requires SPIRE)
 kubectl apply -f k8s/authbridge-deployment.yaml
+```
 
-# OR without SPIFFE
+OR without SPIFFE:
+
+```bash
 kubectl apply -f k8s/authbridge-deployment-no-spiffe.yaml
 ```
 
@@ -388,7 +391,7 @@ TOKEN=$(curl -sX POST http://keycloak-service.keycloak.svc:8080/realms/demo/prot
 echo "Token obtained!"
 
 # Verify token audience (should be Agent's SPIFFE ID via self-aud scope)
-echo $TOKEN | cut -d'.' -f2 | base64 -d 2>/dev/null | jq '{aud, azp, scope}'
+echo $TOKEN | cut -d'.' -f2 | tr '_-' '/+' | { read p; echo "${p}=="; } | base64 -d | jq '{aud, azp, scope}'
 
 # Call auth-target (AuthProxy will exchange token for "auth-target" audience)
 curl -H "Authorization: Bearer $TOKEN" http://auth-target-service:8081/test
@@ -404,7 +407,7 @@ CLIENT_ID=$(cat /shared/client-id.txt)
 CLIENT_SECRET=$(cat /shared/client-secret.txt)
 TOKEN=$(curl -s http://keycloak-service.keycloak.svc:8080/realms/demo/protocol/openid-connect/token \
   -d "grant_type=client_credentials" -d "client_id=$CLIENT_ID" -d "client_secret=$CLIENT_SECRET" | jq -r ".access_token")
-echo "Token audience: $(echo $TOKEN | cut -d. -f2 | base64 -d 2>/dev/null | jq -r .aud)"
+echo "Token audience: $(echo $TOKEN | cut -d. -f2 | tr '_-' '/+' | { read p; echo "${p}=="; } | base64 -d | jq -r .aud)"
 echo "Result: $(curl -s -H "Authorization: Bearer $TOKEN" http://auth-target-service:8081/test)"
 '
 ```
@@ -491,21 +494,22 @@ TOKEN=$(curl -s http://keycloak-service.keycloak.svc:8080/realms/demo/protocol/o
 echo "╔══════════════════════════════════════════════════════════════╗"
 echo "║           ORIGINAL TOKEN (Before Exchange)                   ║"
 echo "╚══════════════════════════════════════════════════════════════╝"
-echo $TOKEN | cut -d"." -f2 | base64 -d 2>/dev/null | jq "{aud, azp, scope}"
+echo $TOKEN | cut -d'.' -f2 | tr '_-' '/+' | { read p; echo "${p}=="; } | base64 -d | jq "{aud, azp, scope}"
 
 echo ""
 echo "╔══════════════════════════════════════════════════════════════╗"
-echo "║  Calling auth-target... (token exchange happens here)       ║"
+echo "║  Calling auth-target... (token exchange happens here)        ║"
 echo "╚══════════════════════════════════════════════════════════════╝"
 RESULT=$(curl -s -H "Authorization: Bearer $TOKEN" http://auth-target-service:8081/test)
 echo "Result: $RESULT"
 
 echo ""
 echo "╔══════════════════════════════════════════════════════════════╗"
-echo "║  Check auth-target logs for EXCHANGED token claims          ║"
+echo "║  Check auth-target logs for EXCHANGED token claims           ║"
 echo "╚══════════════════════════════════════════════════════════════╝"
 echo "Run: kubectl logs deployment/auth-target -n authbridge | tail -20"
 '
+kubectl logs deployment/auth-target -n authbridge | tail -20
 ```
 
 #### Token Claims Summary
