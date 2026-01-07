@@ -65,7 +65,7 @@ A Go HTTP proxy that:
 When `AUDIENCE` is **not set**, AuthProxy operates in **transparent mode**:
 - Validates only the token **signature** and **issuer**
 - Accepts tokens with **any audience** (e.g., the caller's SPIFFE ID)
-- Relies on **token exchange** (via Go Processor) to set the correct target audience
+- Relies on **token exchange** (via Ext Proc) to set the correct target audience
 
 This is useful when the caller obtains a token for itself and you want the proxy to transparently exchange it:
 
@@ -84,7 +84,7 @@ env:
   # AUDIENCE not set - transparent mode
 ```
 
-### 2. Go External Processor (`go-processor/main.go`)
+### 2. Ext Proc - External Processor (`go-processor/main.go`)
 
 An Envoy external processor (gRPC) that:
 - Runs on port **9090**
@@ -114,7 +114,7 @@ When deployed as a sidecar, AuthProxy intercepts all outgoing traffic from the a
 │  ┌──────────────┐    ┌─────────────────────────────────────┐    │
 │  │              │    │         AuthProxy Sidecar           │    │
 │  │  Application │    │  ┌───────────┐    ┌──────────────┐  │    │
-│  │              │───►│  │  Envoy    │───►│ Go Processor │  │    │
+│  │              │───►│  │  Envoy    │───►│  Ext Proc    │  │    │
 │  │              │    │  │  :15123   │    │    :9090     │  │    │
 │  └──────────────┘    │  └───────────┘    └──────────────┘  │    │
 │         │            │        │                 │          │    │
@@ -129,8 +129,8 @@ When deployed as a sidecar, AuthProxy intercepts all outgoing traffic from the a
 
 **Components:**
 - **proxy-init**: Init container that sets up iptables to redirect outbound traffic to Envoy
-- **Envoy**: Intercepts traffic, adds token exchange headers via Lua filter, calls Go Processor
-- **Go Processor**: Performs the actual token exchange with Keycloak
+- **Envoy**: Intercepts traffic, adds token exchange headers via Lua filter, calls Ext Proc
+- **Ext Proc**: Performs the actual token exchange with Keycloak
 - **AuthProxy**: Validates incoming tokens (can also be used for inbound traffic)
 
 ### Standalone Deployment
@@ -166,7 +166,7 @@ This builds:
 - `auth-proxy:latest` - JWT validation proxy
 - `demo-app:latest` - Sample target application
 - `proxy-init:latest` - iptables init container
-- `envoy-with-processor:latest` - Envoy + Go Processor
+- `envoy-with-processor:latest` - Envoy + Ext Proc
 
 ### Deploy
 
@@ -211,7 +211,7 @@ curl -H "Authorization: Bearer invalid-token" http://localhost:8080/test
 # AuthProxy logs (shows token validation)
 kubectl logs deployment/caller -c auth-proxy
 
-# Envoy/Go Processor logs (shows token exchange)
+# Envoy/Ext Proc logs (shows token exchange)
 kubectl logs deployment/caller -c envoy-proxy
 
 # Target app logs (shows received token)
@@ -220,7 +220,7 @@ kubectl logs deployment/auth-target
 
 ## Token Exchange Flow
 
-The Go Processor performs OAuth 2.0 Token Exchange as defined in [RFC 8693](https://datatracker.ietf.org/doc/html/rfc8693):
+The Ext Proc performs OAuth 2.0 Token Exchange as defined in [RFC 8693](https://datatracker.ietf.org/doc/html/rfc8693):
 
 ```cmd
 POST /realms/demo/protocol/openid-connect/token

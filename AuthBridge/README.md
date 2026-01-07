@@ -87,7 +87,7 @@ sequenceDiagram
     participant Reg as Client Registration
     participant Caller as Caller
     participant Agent as Agent
-    participant Envoy as AuthProxy (Envoy + Go Processor)
+    participant Envoy as AuthProxy (Envoy + Ext Proc)
     participant KC as Keycloak
     participant Target as Auth Target
 
@@ -126,7 +126,7 @@ sequenceDiagram
 | 2 | Caller | Token obtained with `aud: Agent's SPIFFE ID` (via `self-aud` scope) |
 | 3 | Agent | Token received from Caller |
 | 4 | AuthProxy | Token validated (aud matches Agent's identity) |
-| 5 | Go Processor | Token exchanged using Agent's credentials → `aud: auth-target` |
+| 5 | Ext Proc | Token exchanged using Agent's credentials → `aud: auth-target` |
 | 6 | Auth Target | Token validated, returns `"authorized"` |
 
 ### Key Security Properties
@@ -194,7 +194,7 @@ flowchart TB
             subgraph Sidecar["AuthProxy Sidecar"]
                 AuthProxy["auth-proxy"]
                 Envoy["envoy-proxy"]
-                GoProc["go-processor"]
+                ExtProc["ext-proc"]
             end
         end
     end
@@ -213,8 +213,8 @@ flowchart TB
     ClientReg --> Keycloak
     Caller --> Keycloak
     Caller -->|"Request + Token<br/>(aud: agent)"| Envoy
-    Envoy --> GoProc
-    GoProc -->|"Token Exchange"| Keycloak
+    Envoy --> ExtProc
+    ExtProc -->|"Token Exchange"| Keycloak
     Envoy -->|"Request + Token<br/>(aud: auth-target)"| AuthTarget
     AuthTarget -->|"authorized"| Caller
 
@@ -242,7 +242,7 @@ flowchart TB
 | `agent` (netshoot) | container | The agent application receiving tokens from Callers |
 | `spiffe-helper` | container | Provides SPIFFE credentials (SVID) |
 | `auth-proxy` | container | Validates tokens |
-| `envoy-proxy` | container | Intercepts traffic and performs token exchange via go-processor |
+| `envoy-proxy` | container | Intercepts traffic and performs token exchange via Ext Proc |
 
 ## Prerequisites
 
