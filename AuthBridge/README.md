@@ -8,55 +8,72 @@ This demo combines the [**Client Registration**](./client-registration/) and [**
 
 The AuthBridge demo showcases a complete **zero-trust authentication flow** for Kubernetes workloads:
 
-1. **Automatic Workload Identity** - A pod automatically obtains its identity from SPIFFE/SPIRE and registers itself as a Keycloak client using its SPIFFE ID (e.g., `spiffe://localtest.me/ns/authbridge/sa/caller`)
+1. **Automatic Agent Identity** - An Agent pod automatically obtains its identity from SPIFFE/SPIRE and registers itself as a Keycloak client using its SPIFFE ID (e.g., `spiffe://localtest.me/ns/authbridge/sa/agent`)
 
-2. **Token-Based Authentication** - The caller workload authenticates to Keycloak using `client_credentials` grant and receives a JWT access token. The token includes `authproxy` in its audience, which authorizes the AuthProxy sidecar to exchange tokens on the caller's behalf.
+2. **Token-Based Authorization** - A Caller obtains a JWT access token from Keycloak with the Agent's identity as the audience (`aud: Agent's SPIFFE ID`). This authorizes the Caller to invoke the Agent.
 
-3. **Authorized Token Exchange** - When the caller makes a request to the target service, an Envoy sidecar (AuthProxy) intercepts the request, validates the token, and exchanges it for one with the correct audience (`auth-target`). The `authproxy-aud` scope in the token explicitly authorizes this exchange.
+3. **Token Delegation** - The Caller passes the token to the Agent. When the Agent needs to call an external service (Auth Target), it uses this token.
 
-4. **Target Service Validation** - The target service validates the exchanged token, ensuring it has the correct audience before authorizing the request
+4. **Transparent Token Exchange** - The Agent's AuthProxy sidecar intercepts outgoing requests, validates the token (audience matches Agent's own identity), and exchanges it for a new token with `aud: auth-target` using the Agent's own credentials.
+
+5. **Target Service Validation** - The Auth Target validates the exchanged token, ensuring it has the correct audience before authorizing the request
 
 ### End-to-End Flow
 
+**Initialization (Agent Pod Startup):**
 ```
-┌─────────────────────────────────────────────────────────────────────────────────────────┐
-│  1. SPIFFE Helper obtains SVID from SPIRE Agent                                         │
-│  2. Client Registration extracts SPIFFE ID and registers with Keycloak                  │
-│  3. Caller gets token from Keycloak (audience: "authproxy" via authproxy-aud scope)     │
-│  4. Caller sends request to auth-target with token                                      │
-│  5. Envoy intercepts request, Go Processor exchanges token (audience: "auth-target")    │
-│  6. Auth Target validates token and returns "authorized"                                │
-└─────────────────────────────────────────────────────────────────────────────────────────┘
+  SPIRE Agent              Agent Pod                         Keycloak
+       │                        │                                │
+       │  0. SVID               │                                │
+       │───────────────────────►│  SPIFFE Helper                 │
+       │  (SPIFFE ID)           │                                │
+       │                        │                                │
+       │                        │  1. Register client            │
+       │                        │  (client_id = SPIFFE ID)       │
+       │                        │───────────────────────────────►│
+       │                        │  Client Registration           │
+       │                        │                                │
+       │                        │◄───────────────────────────────│
+       │                        │  client_secret                 │
+       │                        │  (saved to /shared/)           │
+```
 
-  SPIRE Agent                    Keycloak                       Auth Target
-       │                            │                               │
-       │  1. SVID                   │                               │
-       ▼                            │                               │
-  ┌─────────┐                       │                               │
-  │ SPIFFE  │  2. Register client   │                               │
-  │ Helper  │──────────────────────►│                               │
-  └─────────┘                       │                               │
-       │                            │                               │
-       ▼                            │                               │
-  ┌─────────┐  3. Get token         │                               │
-  │ Caller  │──────────────────────►│                               │
-  │         │◄──────────────────────│                               │
-  │         │ (aud: authproxy)      │   ← Authorizes proxy          │
-  │         │                       │                               │
-  │         │  4. Request + token   │                               │
-  │         │───────────────────────┼──────────────────────────────►│
-  └─────────┘                       │                               │
-       │                            │                               │
-       │      ┌──────────────┐      │                               │
-       └─────►│ Envoy+GoPro  │      │   ← Authorized proxy          │
-              │              │  5. Exchange token                   │
-              │              │─────►│                               │
-              │              │◄─────│                               │
-              │              │   (aud: auth-target)                 │
-              │              │─────────────────────────────────────►│
-              └──────────────┘                              6. Validate & Authorize
-                                                                   │
-                                                              "authorized"
+**Runtime Flow:**
+```
+  Caller              Agent Pod                Auth Target      Keycloak
+    │                     │                        │               │
+    │  2. Get token       │                        │               │
+    │  (aud: Agent's SPIFFE ID)                    │               │
+    │─────────────────────────────────────────────────────────────►│
+    │◄─────────────────────────────────────────────────────────────│
+    │  Token (self-aud)   │                        │               │
+    │                     │                        │               │
+    │  3. Pass token      │                        │               │
+    │  to Agent           │                        │               │
+    │────────────────────►│                        │               │
+    │                     │                        │               │
+    │                     │  4. Agent calls        │               │
+    │                     │  Auth Target with      │               │
+    │                     │  Caller's token        │               │
+    │                     │──────────┐             │               │
+    │                     │          │             │               │
+    │                     │  AuthProxy intercepts  │               │
+    │                     │  validates aud=Agent   │               │
+    │                     │          │             │               │
+    │                     │  5. Token Exchange     │               │
+    │                     │  (using Agent's creds) │               │
+    │                     │────────────────────────────────────────►│
+    │                     │◄────────────────────────────────────────│
+    │                     │  New token (aud: auth-target)          │
+    │                     │          │             │               │
+    │                     │  6. Forward request    │               │
+    │                     │  with exchanged token  │               │
+    │                     │────────────────────────►│               │
+    │                     │                        │               │
+    │                     │◄────────────────────────│               │
+    │                     │  "authorized"          │               │
+    │◄────────────────────│                        │               │
+    │  Response           │                        │               │
 ```
 
 <details>
@@ -69,29 +86,33 @@ sequenceDiagram
     participant Helper as SPIFFE Helper
     participant Reg as Client Registration
     participant Caller as Caller
-    participant Envoy as Envoy + Go Processor
+    participant Agent as Agent
+    participant Envoy as AuthProxy (Envoy + Go Processor)
     participant KC as Keycloak
     participant Target as Auth Target
 
-    Note over Helper,SPIRE: Pod Initialization
+    Note over Helper,SPIRE: Agent Pod Initialization
     SPIRE->>Helper: SVID (SPIFFE credentials)
     Helper->>Reg: JWT with SPIFFE ID
-    Reg->>KC: Register client (SPIFFE ID)
-    KC-->>Reg: Client credentials
+    Reg->>KC: Register client (client_id = SPIFFE ID)
+    KC-->>Reg: Client credentials (saved to /shared/)
 
-    Note over Caller,Target: Request Flow (Authorized Proxy)
-    Caller->>KC: Get token (client_credentials)
-    KC-->>Caller: Token (aud: authproxy)
+    Note over Caller,Target: Runtime Flow
+    Caller->>KC: Get token (aud: Agent's SPIFFE ID)
+    KC-->>Caller: Token with self-aud scope
     
-    Caller->>Envoy: Request + Token
-    Note over Envoy: Validates token, authorized via aud claim
+    Caller->>Agent: Pass token
+    Agent->>Envoy: Call Auth Target with Caller's token
     
-    Envoy->>KC: Token Exchange
+    Note over Envoy: AuthProxy intercepts<br/>Validates aud = Agent's ID<br/>Uses Agent's credentials
+    
+    Envoy->>KC: Token Exchange (Agent's creds)
     KC-->>Envoy: New Token (aud: auth-target)
     
     Envoy->>Target: Request + Exchanged Token
     Target->>Target: Validate token (aud: auth-target)
-    Target-->>Caller: "authorized"
+    Target-->>Agent: "authorized"
+    Agent-->>Caller: Response
 ```
 
 </details>
@@ -100,28 +121,29 @@ sequenceDiagram
 
 | Step | Component | Verification |
 |------|-----------|--------------|
-| 1 | SPIFFE Helper | SVID obtained from SPIRE Agent |
-| 2 | Client Registration | Keycloak client created with SPIFFE ID |
-| 3 | Caller | Token received with `aud: authproxy` (via `authproxy-aud` scope) |
-| 4 | Envoy + Go Processor | Token exchanged successfully (authorized by `aud` claim) |
-| 5 | Auth Target | Token validated with `aud: auth-target` |
-| 6 | *End-to-End* | Response: `"authorized"` |
+| 0 | SPIFFE Helper | SVID obtained from SPIRE Agent |
+| 1 | Client Registration | Agent registered with Keycloak (client_id = SPIFFE ID) |
+| 2 | Caller | Token obtained with `aud: Agent's SPIFFE ID` (via `self-aud` scope) |
+| 3 | Agent | Token received from Caller |
+| 4 | AuthProxy | Token validated (aud matches Agent's identity) |
+| 5 | Go Processor | Token exchanged using Agent's credentials → `aud: auth-target` |
+| 6 | Auth Target | Token validated, returns `"authorized"` |
 
 ### Key Security Properties
 
-- **No Static Secrets** - The caller's client credentials are dynamically generated during registration
+- **No Static Secrets** - The Agent's credentials are dynamically generated during registration
 - **Short-Lived Tokens** - JWT tokens expire and must be refreshed
-- **Audience Scoping** - Tokens are scoped to specific audiences, preventing token reuse across services
-- **Explicit Proxy Authorization** - The `authproxy-aud` scope explicitly authorizes which proxies can exchange tokens on behalf of callers
-- **Transparent to Application** - The caller application doesn't need to implement token exchange logic; it's handled by the sidecar
+- **Self-Audience Scoping** - Tokens include the Agent's own identity as audience, enabling token exchange
+- **Same Identity for Exchange** - AuthProxy uses the Agent's credentials (same SPIFFE ID), matching the token's audience
+- **Transparent to Application** - The Agent doesn't need to implement token exchange logic; it's handled by the sidecar
 
 ## Architecture
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
-│                           CALLER POD                                   │
+│                           AGENT POD                                    │
 │                       (namespace: authbridge)                          │
-│                     (serviceAccount: caller)                           │
+│                      (serviceAccount: agent)                           │
 │                                                                        │
 │  ┌─────────────────────────────────────────────────────────────────┐   │
 │  │  Init Container: proxy-init (iptables setup)                    │   │
@@ -130,20 +152,21 @@ sequenceDiagram
 │  ┌─────────────────────────────────────────────────────────────────┐   │
 │  │                      Containers                                 │   │
 │  │  ┌──────────────┐  ┌─────────────────┐  ┌────────────────────┐  │   │
-│  │  │   Caller     │  │  SPIFFE Helper  │  │    AuthProxy +     │  │   │
+│  │  │    Agent     │  │  SPIFFE Helper  │  │    AuthProxy +     │  │   │
 │  │  │  (netshoot)  │  │  (provides      │  │    Envoy + Go Proc │  │   │
 │  │  │              │  │   SPIFFE creds) │  │  (token exchange)  │  │   │
 │  │  └──────┬───────┘  └─────────────────┘  └──────────┬─────────┘  │   │
 │  │                                                                 │   │
 │  │  ┌───────────────────────────────────────────────────────────┐  │   │
-│  │  │ client-registration (registers with Keycloak using SPIFFE)│  │   │
+│  │  │ client-registration (registers Agent with Keycloak)       │  │   │
 │  │  └───────────────────────────────────────────────────────────┘  │   │
 │  └─────────┼───────────────────────────────────────────┼───────────┘   │
-│            │ HTTP request with token                   │               │
+│            │ Caller's token (aud: Agent)               │               │
 │            └───────────────────────────────────────────┘               │
 │                              │                                         │
 └──────────────────────────────┼─────────────────────────────────────────┘
                                │ Token exchanged for auth-target audience
+                               │ (using Agent's own credentials)
                                ▼
                     ┌─────────────────────┐
                     │   AUTH TARGET POD   │
@@ -189,7 +212,7 @@ flowchart TB
     SpiffeHelper --> ClientReg
     ClientReg --> Keycloak
     Caller --> Keycloak
-    Caller -->|"Request + Token<br/>(aud: authproxy)"| Envoy
+    Caller -->|"Request + Token<br/>(aud: agent)"| Envoy
     Envoy --> GoProc
     GoProc -->|"Token Exchange"| Keycloak
     Envoy -->|"Request + Token<br/>(aud: auth-target)"| AuthTarget
@@ -216,7 +239,7 @@ flowchart TB
 |-----------|------|---------|
 | `proxy-init` | init | Sets up iptables to intercept outgoing traffic (excludes port 8080 for Keycloak) |
 | `client-registration` | container | Registers workload with Keycloak using SPIFFE ID, saves credentials to `/shared/` |
-| `caller` (netshoot) | container | The application making requests (has curl and jq) |
+| `agent` (netshoot) | container | The agent application receiving tokens from Callers |
 | `spiffe-helper` | container | Provides SPIFFE credentials (SVID) |
 | `auth-proxy` | container | Validates tokens |
 | `envoy-proxy` | container | Intercepts traffic and performs token exchange via go-processor |
@@ -258,7 +281,7 @@ kubectl apply -f k8s/auth-proxy-config.yaml
 This creates:
 
 - `authbridge` namespace
-- `caller` ServiceAccount
+- `agent` ServiceAccount
 - `auth-proxy-config` secret for accessing Keycloak
 
 ### Step 3: Configure Keycloak
@@ -289,17 +312,17 @@ python setup_keycloak.py
 The `setup_keycloak` script creates:
 
 - `demo` realm
-- `authproxy` client (for token exchange)
+- `agent` client (for token exchange)
 - `auth-target` client (token exchange target audience)
-- `authproxy-aud` scope (realm default - all clients get it)
+- `agent-aud` scope (realm default - all clients get it)
 - `auth-target-aud` scope (for exchanged tokens)
 
-**Important:** Copy the `authproxy` client secret from the output.
+**Important:** Copy the `agent` client secret from the output.
 
 ### Step 4: Update the Secret
 
 ```bash
-# IMPORTANT: Update with the actual authproxy client secret from Step 3
+# IMPORTANT: Update with the actual agent client secret from Step 3
 # Copy the secret value from the setup_keycloak.py output
 kubectl patch secret auth-proxy-config -n authbridge -p '{"stringData":{"CLIENT_SECRET":"YOUR_AUTHPROXY_SECRET_HERE"}}'
 
@@ -330,20 +353,20 @@ kubectl apply -f k8s/authbridge-deployment-no-spiffe.yaml
 This creates:
 
 - ConfigMaps and Secrets
-- `caller` and `auth-target` deployments
+- `agent` and `auth-target` deployments
 
 ### Step 7: Wait for Deployments
 
 ```bash
-kubectl wait --for=condition=available --timeout=180s deployment/caller -n authbridge
+kubectl wait --for=condition=available --timeout=180s deployment/agent -n authbridge
 kubectl wait --for=condition=available --timeout=120s deployment/auth-target -n authbridge
 ```
 
 ### Step 8: Test the Flow
 
 ```bash
-# Exec into the caller container
-kubectl exec -it deployment/caller -n authbridge -c caller -- sh
+# Exec into the agent container
+kubectl exec -it deployment/agent -n authbridge -c agent -- sh
 ```
 
 Inside the container (or run as a single command):
@@ -364,7 +387,7 @@ TOKEN=$(curl -sX POST http://keycloak-service.keycloak.svc:8080/realms/demo/prot
 
 echo "Token obtained!"
 
-# Verify token audience (should be caller's client ID / SPIFFE ID)
+# Verify token audience (should be Agent's SPIFFE ID via self-aud scope)
 echo $TOKEN | cut -d'.' -f2 | base64 -d 2>/dev/null | jq '{aud, azp, scope}'
 
 # Call auth-target (AuthProxy will exchange token for "auth-target" audience)
@@ -376,7 +399,7 @@ curl -H "Authorization: Bearer $TOKEN" http://auth-target-service:8081/test
 **Or run the complete test as a single command:**
 
 ```bash
-kubectl exec deployment/caller -n authbridge -c caller -- sh -c '
+kubectl exec deployment/agent -n authbridge -c agent -- sh -c '
 CLIENT_ID=$(cat /shared/client-id.txt)
 CLIENT_SECRET=$(cat /shared/client-secret.txt)
 TOKEN=$(curl -s http://keycloak-service.keycloak.svc:8080/realms/demo/protocol/openid-connect/token \
@@ -405,7 +428,7 @@ TOKEN=$(curl -sX POST http://keycloak-service.keycloak.svc:8080/realms/demo/prot
 
 # Decode and display important claims
 echo "=== ORIGINAL TOKEN (Before Exchange) ==="
-echo $TOKEN | cut -d'.' -f2 | base64 -d 2>/dev/null | jq '{
+echo $TOKEN | cut -d'.' -f2 | tr '_-' '/+' | { read p; echo "${p}=="; } | base64 -d  | jq '{
   aud: .aud,
   azp: .azp,
   scope: .scope,
@@ -419,21 +442,21 @@ echo $TOKEN | cut -d'.' -f2 | base64 -d 2>/dev/null | jq '{
 **Expected output:**
 ```json
 {
-  "aud": "authproxy",
-  "azp": "spiffe://localtest.me/ns/authbridge/sa/caller",
-  "scope": "authproxy-aud profile email",
+  "aud": "agent",
+  "azp": "spiffe://localtest.me/ns/authbridge/sa/agent",
+  "scope": "agent-aud profile email",
   "iss": "http://keycloak.localtest.me:8080/realms/demo",
-  "sub": "...",
-  "exp": 1234567890,
-  "iat": 1234567890
+  "sub": "3fe8b589-aefa-4377-b735-3c5110ec3ec2",
+  "exp": 1767756190,
+  "iat": 1767755890
 }
 ```
 
 Key observations:
-- `aud: authproxy` - Authorizes the AuthProxy to exchange this token
+- `aud: agent` - Authorizes the AuthProxy to exchange this token (using static `agent` client)
 - `azp` - The SPIFFE ID of the caller (authorized party / client ID)
-- `scope: authproxy-aud` - The scope that adds `authproxy` to the audience
-- **Security model** - The `authproxy-aud` scope explicitly authorizes token exchange
+- `scope: agent-aud` - The scope that adds `agent` to the audience
+- **Security model** - The `agent-aud` scope explicitly authorizes token exchange
 
 #### View Exchanged Token Claims (After Exchange)
 
@@ -455,7 +478,7 @@ kubectl logs deployment/auth-target -n authbridge | grep -A 20 "JWT Debug"
 Run this from the caller container to see both tokens side-by-side:
 
 ```bash
-kubectl exec deployment/caller -n authbridge -c caller -- sh -c '
+kubectl exec deployment/agent -n authbridge -c agent -- sh -c '
 CLIENT_ID=$(cat /shared/client-id.txt)
 CLIENT_SECRET=$(cat /shared/client-secret.txt)
 
@@ -489,17 +512,17 @@ echo "Run: kubectl logs deployment/auth-target -n authbridge | tail -20"
 
 | Claim | Before Exchange | After Exchange |
 |-------|-----------------|----------------|
-| `aud` | `authproxy` | `auth-target` |
-| `azp` | SPIFFE ID (caller) | `authproxy` |
-| `scope` | `authproxy-aud profile email` | `auth-target-aud` |
+| `aud` | `agent` | `auth-target` |
+| `azp` | SPIFFE ID (caller) | `agent` |
+| `scope` | `agent-aud profile email` | `auth-target-aud` |
 | `iss` | Keycloak realm | Keycloak realm (same) |
 
 The key changes during token exchange:
-- **`aud`** transforms from `authproxy` to `auth-target`, allowing the target service to validate the token
-- **`azp`** changes to `authproxy`, indicating the proxy performed the exchange
+- **`aud`** transforms from `agent` to `auth-target`, allowing the target service to validate the token
+- **`azp`** changes to `agent`, indicating the proxy performed the exchange
 
 **Security Model Benefits:**
-- The `authproxy-aud` scope explicitly authorizes which proxies can exchange tokens
+- The `agent-aud` scope explicitly authorizes which proxies can exchange tokens
 - Only authorized proxies (those in the token's audience) can perform token exchange
 - Clear audit trail - you can see which proxy exchanged the token via the `azp` claim
 - Token exchange logic is handled by the sidecar, transparent to the application code
@@ -509,7 +532,7 @@ The key changes during token exchange:
 ### Check Client Registration
 
 ```bash
-kubectl logs deployment/caller -n authbridge -c client-registration
+kubectl logs deployment/agent -n authbridge -c client-registration
 ```
 
 You should see:
@@ -524,7 +547,7 @@ Client registration complete!
 ### Check Token Exchange
 
 ```bash
-kubectl logs deployment/caller -n authbridge -c envoy-proxy 2>&1 | grep -i "token"
+kubectl logs deployment/agent -n authbridge -c envoy-proxy 2>&1 | grep -i "token"
 ```
 
 You should see:
@@ -570,18 +593,18 @@ Authorized request: GET /test
 {"error":"access_denied","error_description":"Client is not within the token audience"}
 ```
 
-**Cause:** The caller's token doesn't include `authproxy` in its audience. Keycloak requires the exchanging client (`authproxy`) to be in the token's audience for security reasons.
+**Cause:** The caller's token doesn't include `agent` in its audience. Keycloak requires the exchanging client (`agent`) to be in the token's audience for security reasons.
 
-**Fix:** Add the `authproxy-aud` scope to the caller client:
+**Fix:** Add the `agent-aud` scope to the caller client:
 
 ```bash
-kubectl exec deployment/caller -n authbridge -c caller -- sh -c '
+kubectl exec deployment/agent -n authbridge -c agent -- sh -c '
 ADMIN_TOKEN=$(curl -s http://keycloak-service.keycloak.svc:8080/realms/master/protocol/openid-connect/token \
   -d "grant_type=password" -d "client_id=admin-cli" -d "username=admin" -d "password=admin" | jq -r ".access_token")
 
 SCOPE_ID=$(curl -s -H "Authorization: Bearer $ADMIN_TOKEN" \
   "http://keycloak-service.keycloak.svc:8080/admin/realms/demo/client-scopes" | \
-  jq -r ".[] | select(.name==\"authproxy-aud\") | .id")
+  jq -r ".[] | select(.name==\"agent-aud\") | .id")
 
 CLIENT_ID=$(cat /shared/client-id.txt)
 INTERNAL_ID=$(curl -s -H "Authorization: Bearer $ADMIN_TOKEN" \
@@ -590,11 +613,11 @@ INTERNAL_ID=$(curl -s -H "Authorization: Bearer $ADMIN_TOKEN" \
 curl -s -X PUT -H "Authorization: Bearer $ADMIN_TOKEN" \
   "http://keycloak-service.keycloak.svc:8080/admin/realms/demo/clients/$INTERNAL_ID/default-client-scopes/$SCOPE_ID"
 
-echo "Added authproxy-aud scope to $CLIENT_ID"
+echo "Added agent-aud scope to $CLIENT_ID"
 '
 ```
 
-**Note:** This is a security feature, not a limitation. The `authproxy-aud` scope explicitly authorizes the AuthProxy to exchange tokens on behalf of the caller. This prevents unauthorized proxies from exchanging tokens.
+**Note:** This is a security feature, not a limitation. The `agent-aud` scope explicitly authorizes the AuthProxy to exchange tokens on behalf of the caller. This prevents unauthorized proxies from exchanging tokens.
 
 ### Token Exchange Fails with "Client not enabled to retrieve service account"
 
@@ -619,7 +642,7 @@ echo "Added authproxy-aud scope to $CLIENT_ID"
 The published `client-registration` image doesn't yet have the `serviceAccountsEnabled` fix. Run this to enable it:
 
 ```bash
-kubectl exec deployment/caller -n authbridge -c caller -- sh -c '
+kubectl exec deployment/agent -n authbridge -c agent -- sh -c '
 CLIENT_ID=$(cat /shared/client-id.txt)
 echo "Enabling service accounts for: $CLIENT_ID"
 
@@ -641,11 +664,11 @@ echo "Done!"
 
 ```bash
 # Caller pod containers
-kubectl logs deployment/caller -n authbridge -c caller
-kubectl logs deployment/caller -n authbridge -c client-registration
-kubectl logs deployment/caller -n authbridge -c spiffe-helper
-kubectl logs deployment/caller -n authbridge -c auth-proxy
-kubectl logs deployment/caller -n authbridge -c envoy-proxy
+kubectl logs deployment/agent -n authbridge -c agent
+kubectl logs deployment/agent -n authbridge -c client-registration
+kubectl logs deployment/agent -n authbridge -c spiffe-helper
+kubectl logs deployment/agent -n authbridge -c auth-proxy
+kubectl logs deployment/agent -n authbridge -c envoy-proxy
 
 # Auth Target
 kubectl logs deployment/auth-target -n authbridge

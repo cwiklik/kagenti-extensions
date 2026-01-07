@@ -2,33 +2,35 @@
 setup_keycloak.py - AuthBridge Demo Setup
 
 This script configures Keycloak for the AuthBridge demo that combines:
-1. Client Registration with SPIFFE ID (for the caller)
-2. AuthProxy sidecar for token exchange (transparent mode)
+1. Client Registration with SPIFFE ID (for the Agent pod identity)
+2. AuthProxy sidecar for token exchange (using agent client)
 3. Auth Target (target server) that validates exchanged tokens
 
 Architecture:
-  Caller Pod (Caller + SPIFFE Helper + Client Registration + AuthProxy)
+  Caller → gets token (aud: agent) → passes to Agent
+                                              ↓
+  Agent Pod (Agent + SPIFFE Helper + Client Registration + AuthProxy)
        |
-       | Token with audience = caller's client ID (e.g., SPIFFE ID)
+       | Agent calls Auth Target with Caller's token
        v
-  AuthProxy (Envoy) - transparent, accepts any valid token
+  AuthProxy (Envoy) - validates token, exchanges using agent credentials
        |
        | Token Exchange → audience "auth-target"
        v
   Auth Target (validates token has aud=auth-target)
 
 Clients created:
-- authproxy: Used by AuthProxy to exchange tokens for auth-target access
+- agent: Used by AuthProxy sidecar to exchange tokens (static client)
 - auth-target: Target audience for token exchange (required by Keycloak)
 
 Client Scopes created:
-- authproxy-aud: Adds "authproxy" to token audience (realm default - authorizes proxy)
+- agent-aud: Adds "agent" to token audience (realm default)
 - auth-target-aud: Adds "auth-target" to token audience (for exchanged tokens)
 
-Note: The caller client is auto-registered by the client-registration init container
-using the SPIFFE ID as the client ID. The authproxy-aud scope is added as a realm
-default, so all clients (including auto-registered ones) will have tokens with
-"authproxy" in the audience. This authorizes the AuthProxy to exchange their tokens.
+Note: The Agent workload is auto-registered by the client-registration container
+using the SPIFFE ID as the client ID. The agent-aud scope is added as a realm
+default, so all tokens have "agent" in the audience. This allows the AuthProxy
+(authenticating as the static 'agent' client) to exchange tokens.
 """
 
 from keycloak import KeycloakAdmin, KeycloakPostError
@@ -111,6 +113,47 @@ def add_audience_mapper(keycloak_admin, scope_id, mapper_name, audience):
         print(f"Note: Could not add mapper '{mapper_name}' (might already exist): {e}")
 
 
+def add_self_audience_mapper(keycloak_admin, scope_id, mapper_name):
+    """Add a script mapper that adds the client's own ID to its token audience.
+    
+    This enables the AuthProxy (using the same client credentials) to exchange
+    the token, since the exchanging client will be in the token's audience.
+    """
+    # Script that adds the client's own ID to the audience
+    script = """
+// Add the client's own ID to the token audience
+var clientId = keycloakSession.getContext().getClient().getClientId();
+var audiences = token.getAudience();
+if (audiences == null) {
+    audiences = new java.util.HashSet();
+}
+audiences.add(clientId);
+token.audience(audiences.toArray(new java.lang.String[0]));
+"""
+    
+    mapper_payload = {
+        "name": mapper_name,
+        "protocol": "openid-connect",
+        "protocolMapper": "oidc-script-based-protocol-mapper",
+        "consentRequired": False,
+        "config": {
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "false",
+            "multivalued": "true",
+            "claim.name": "audience",
+            "script": script
+        }
+    }
+    
+    try:
+        keycloak_admin.add_mapper_to_client_scope(scope_id, mapper_payload)
+        print(f"Added self-audience script mapper '{mapper_name}'")
+    except Exception as e:
+        # Mapper might already exist
+        print(f"Note: Could not add script mapper '{mapper_name}' (might already exist): {e}")
+
+
 def main():
     print("=" * 60)
     print("AuthBridge Demo - Keycloak Setup")
@@ -147,12 +190,12 @@ def main():
         user_realm_name="master"
     )
     
-    # Create authproxy client (used by AuthProxy sidecar for token exchange)
-    print("\n--- Creating authproxy client ---")
+    # Create agent client (used by AuthProxy sidecar for token exchange)
+    print("\n--- Creating agent client ---")
     print("This client is used by the AuthProxy sidecar to exchange tokens")
-    authproxy_id = get_or_create_client(keycloak_admin, {
-        "clientId": "authproxy",
-        "name": "Auth Proxy",
+    agent_id = get_or_create_client(keycloak_admin, {
+        "clientId": "agent",
+        "name": "Agent",
         "enabled": True,
         "publicClient": False,
         "standardFlowEnabled": False,
@@ -180,17 +223,17 @@ def main():
     # Create client scopes
     print("\n--- Creating client scopes ---")
     
-    # authproxy-aud scope - added to all tokens (realm default)
-    # This authorizes the AuthProxy to exchange tokens on behalf of callers
-    authproxy_scope_id = get_or_create_client_scope(keycloak_admin, {
-        "name": "authproxy-aud",
+    # agent-aud scope - adds "agent" to token audience (realm default)
+    # This allows the agent client to exchange tokens on behalf of any client
+    agent_scope_id = get_or_create_client_scope(keycloak_admin, {
+        "name": "agent-aud",
         "protocol": "openid-connect",
         "attributes": {
             "include.in.token.scope": "true",
             "display.on.consent.screen": "true"
         }
     })
-    add_audience_mapper(keycloak_admin, authproxy_scope_id, "authproxy-aud", "authproxy")
+    add_audience_mapper(keycloak_admin, agent_scope_id, "agent-aud", "agent")
     
     # auth-target-aud scope - added to exchanged tokens
     # This makes the AuthProxy's exchanged token valid for auth-target
@@ -207,23 +250,23 @@ def main():
     # Assign scopes
     print("\n--- Assigning scopes ---")
     
-    # Add authproxy-aud as realm default scope
-    # This ensures all clients (including auto-registered ones) get tokens with
-    # "authproxy" in the audience, authorizing the AuthProxy to exchange their tokens
+    # Add agent-aud as realm default scope
+    # This ensures all clients (including auto-registered Agent) get tokens with
+    # "agent" in the audience, allowing AuthProxy to exchange them
     try:
-        keycloak_admin.add_default_default_client_scope(authproxy_scope_id)
-        print("Added 'authproxy-aud' as realm default scope (all clients will get it).")
+        keycloak_admin.add_default_default_client_scope(agent_scope_id)
+        print("Added 'agent-aud' as realm default scope (all clients will get it).")
     except Exception as e:
-        print(f"Note: Could not add 'authproxy-aud' as realm default (might already exist): {e}")
+        print(f"Note: Could not add 'agent-aud' as realm default (might already exist): {e}")
     
-    # authproxy gets auth-target-aud (so its exchanged tokens target auth-target)
+    # agent gets auth-target-aud (so its exchanged tokens target auth-target)
     try:
-        keycloak_admin.add_client_default_client_scope(authproxy_id, auth_target_scope_id, {})
-        print("Assigned 'auth-target-aud' as default scope to 'authproxy'.")
+        keycloak_admin.add_client_default_client_scope(agent_id, auth_target_scope_id, {})
+        print("Assigned 'auth-target-aud' as default scope to 'agent'.")
     except Exception as e:
-        print(f"Note: Could not assign 'auth-target-aud' scope (might already exist): {e}")
+        print(f"Note: Could not assign 'auth-target-aud' scope to agent (might already exist): {e}")
     
-    # auth-target also gets auth-target-aud (so tokens for auth-target have correct audience)
+    # auth-target gets auth-target-aud (so tokens for auth-target have correct audience)
     try:
         keycloak_admin.add_client_default_client_scope(auth_target_id, auth_target_scope_id, {})
         print("Assigned 'auth-target-aud' as default scope to 'auth-target'.")
@@ -236,18 +279,18 @@ def main():
     print("=" * 60)
     
     try:
-        authproxy_secret = keycloak_admin.get_client_secrets(authproxy_id)['value']
+        agent_secret = keycloak_admin.get_client_secrets(agent_id)['value']
         
-        print("\n--- authproxy client credentials ---")
-        print(f"Client ID: authproxy")
-        print(f"Client Secret: {authproxy_secret}")
+        print("\n--- agent client credentials ---")
+        print(f"Client ID: agent")
+        print(f"Client Secret: {agent_secret}")
         
         print("\n" + "=" * 60)
         print("NEXT STEPS")
         print("=" * 60)
         
-        print("\n1. Update the auth-proxy-config secret with the authproxy client secret:")
-        print(f"\n   kubectl patch secret auth-proxy-config -n authbridge -p '{{\"stringData\":{{\"CLIENT_SECRET\":\"{authproxy_secret}\"}}}}'\n")
+        print("\n1. Update the auth-proxy-config secret with the agent client secret:")
+        print(f"\n   kubectl patch secret auth-proxy-config -n authbridge -p '{{\"stringData\":{{\"CLIENT_SECRET\":\"{agent_secret}\"}}}}'\n")
         
         print("2. Deploy the AuthBridge demo:")
         print("\n   # With SPIFFE (requires SPIRE)")
@@ -256,32 +299,37 @@ def main():
         print("   kubectl apply -f k8s/authbridge-deployment-no-spiffe.yaml\n")
         
         print("3. Wait for pods to be ready:")
-        print("\n   kubectl wait --for=condition=available --timeout=120s deployment/caller -n authbridge")
+        print("\n   kubectl wait --for=condition=available --timeout=120s deployment/agent -n authbridge")
         print("   kubectl wait --for=condition=available --timeout=120s deployment/auth-target -n authbridge\n")
         
-        print("4. Test from inside the caller pod:")
+        print("4. Test from inside the agent pod:")
         print("""
-   kubectl exec -it deployment/caller -n authbridge -c caller -- sh
+   kubectl exec -it deployment/agent -n authbridge -c agent -- sh
    
-   # Inside the container (credentials are auto-populated):
+   # Inside the container (credentials are auto-populated by client-registration):
    CLIENT_ID=$(cat /shared/client-id.txt)
    CLIENT_SECRET=$(cat /shared/client-secret.txt)
    
-   # Get a token
+   # Get a token (simulating what a Caller would do)
+   # The token will have aud: agent due to agent-aud realm default scope
    TOKEN=$(curl -sX POST \\
      http://keycloak-service.keycloak.svc:8080/realms/demo/protocol/openid-connect/token \\
      -d 'grant_type=client_credentials' \\
      -d "client_id=$CLIENT_ID" \\
      -d "client_secret=$CLIENT_SECRET" | jq -r '.access_token')
    
-   # Call auth-target (AuthProxy will exchange the token)
+   # Verify token audience (should include "agent")
+   echo $TOKEN | cut -d'.' -f2 | tr '_-' '/+' | { read p; echo "${p}=="; } | base64 -d | jq '{aud, azp, scope}'
+   
+   # Agent calls auth-target (AuthProxy will exchange token for aud: auth-target)
    curl -H "Authorization: Bearer $TOKEN" http://auth-target-service:8081/test
    # Expected: "authorized"
 """)
         
-        print("\nNote: The caller client is auto-registered by the client-registration")
-        print("container. For SPIFFE version, it uses the SPIFFE ID as client ID.")
-        print("The client ID and secret are saved to /shared/client-id.txt and /shared/client-secret.txt.")
+        print("\nNote: The Agent is auto-registered by the client-registration container")
+        print("using the SPIFFE ID as client ID. The agent-aud scope is a realm default,")
+        print("so all tokens have 'agent' in the audience. AuthProxy (using the 'agent'")
+        print("client credentials) can exchange these tokens.")
         
     except Exception as e:
         print(f"Could not retrieve secrets: {e}")

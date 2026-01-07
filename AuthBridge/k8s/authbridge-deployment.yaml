@@ -1,16 +1,23 @@
 # AuthBridge Demo Deployment (with SPIFFE)
 # 
 # This deployment demonstrates:
-# 1. Caller pod with automatic client registration using SPIFFE ID
+# 1. Agent pod with automatic client registration using SPIFFE ID
 # 2. AuthProxy sidecar intercepts outgoing requests and exchanges tokens
 # 3. Auth Target (target server) validates the exchanged tokens
 #
-# Flow: Caller -> AuthProxy (sidecar, exchanges token) -> Auth Target (validates token)
+# Flow:
+#   0. SPIFFE Helper obtains SVID (Agent's identity = SPIFFE ID)
+#   1. Client Registration registers Agent with Keycloak
+#   2. Caller gets token with aud: Agent's SPIFFE ID
+#   3. Caller passes token to Agent
+#   4. Agent calls Auth Target with Caller's token
+#   5. AuthProxy intercepts, validates, and exchanges token (using Agent's credentials)
+#   6. Auth Target validates exchanged token (aud: auth-target)
 #
-# Pod 1: Caller Pod
-#   - Caller: The calling application
+# Pod 1: Agent Pod
+#   - Agent: The agent application (receives tokens from Callers)
 #   - SPIFFE Helper: Provides SPIFFE credentials (SVID)
-#   - Client Registration: Registers caller with Keycloak using SPIFFE ID
+#   - Client Registration: Registers Agent with Keycloak using SPIFFE ID
 #   - AuthProxy + Envoy: Intercepts outgoing traffic and exchanges tokens
 #
 # Pod 2: Auth Target (Target Server)
@@ -162,31 +169,31 @@ data:
 
 ---
 # =============================================================================
-# CALLER POD
-# Contains: Caller, SPIFFE Helper, Client Registration, AuthProxy
+# AGENT POD
+# Contains: Agent, SPIFFE Helper, Client Registration, AuthProxy
 # =============================================================================
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: caller
+  name: agent
   namespace: authbridge
   labels:
-    app: caller
+    app: agent
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: caller
+      app: agent
   template:
     metadata:
       labels:
-        app: caller
+        app: agent
         istio.io/dataplane-mode: none
       annotations:
         ambient.istio.io/redirection: disabled
         sidecar.istio.io/inject: "false"
     spec:
-      serviceAccountName: caller
+      serviceAccountName: agent
       imagePullSecrets:
         - name: ghcr-secret
       initContainers:
@@ -289,16 +296,16 @@ spec:
               mountPath: /shared
             - name: svid-output
               mountPath: /opt
-        # Caller - the calling application (uses netshoot with curl and jq)
-        # Use: kubectl exec -it deployment/caller -n authbridge -c caller -- sh
+        # Agent - the agent application (receives tokens from Callers, calls external services)
+        # Use: kubectl exec -it deployment/agent -n authbridge -c agent -- sh
         # Then: curl -H "Authorization: Bearer $TOKEN" http://auth-target-service:8081/test
-        - name: caller
+        - name: agent
           image: nicolaka/netshoot:latest
           command:
             - /bin/sh
             - -c
             - |
-              echo "Caller pod ready!"
+              echo "Agent pod ready!"
               echo "Waiting for client registration to complete..."
               while [ ! -f /shared/client-secret.txt ] || [ ! -f /shared/client-id.txt ]; do
                 sleep 2
@@ -309,14 +316,20 @@ spec:
               
               echo ""
               echo "============================================"
-              echo "Client registered with Keycloak!"
-              echo "Client ID: $CLIENT_ID"
+              echo "Agent registered with Keycloak!"
+              echo "Client ID (Agent's SPIFFE ID): $CLIENT_ID"
               echo "Client Secret: $CLIENT_SECRET"
               echo "============================================"
               echo ""
-              echo "To test, exec into this container and run:"
+              echo "=== AuthBridge Flow ==="
+              echo "1. Caller gets token with aud: $CLIENT_ID (this Agent's identity)"
+              echo "2. Caller passes token to Agent"
+              echo "3. Agent calls Auth Target with Caller's token"
+              echo "4. AuthProxy exchanges token for aud: auth-target"
               echo ""
-              echo "  # Get a token from Keycloak"
+              echo "To test (simulating a Caller providing a token):"
+              echo ""
+              echo "  # Get a token (as if Caller obtained it)"
               echo "  CLIENT_ID=\$(cat /shared/client-id.txt)"
               echo "  CLIENT_SECRET=\$(cat /shared/client-secret.txt)"
               echo "  TOKEN=\$(curl -sX POST http://keycloak-service.keycloak.svc:8080/realms/demo/protocol/openid-connect/token \\"
@@ -324,7 +337,10 @@ spec:
               echo "    -d \"client_id=\$CLIENT_ID\" \\"
               echo "    -d \"client_secret=\$CLIENT_SECRET\" | jq -r '.access_token')"
               echo ""
-              echo "  # Call auth-target through AuthProxy"
+              echo "  # Verify token audience (should be Agent's SPIFFE ID)"
+              echo "  echo \$TOKEN | cut -d'.' -f2 | base64 -d 2>/dev/null | jq '{aud, azp}'"
+              echo ""
+              echo "  # Agent calls auth-target (AuthProxy will exchange token)"
               echo "  curl -H \"Authorization: Bearer \$TOKEN\" http://auth-target-service:8081/test"
               echo ""
               # Keep container running
@@ -373,6 +389,7 @@ spec:
               cpu: 100m
               memory: 128Mi
         # Envoy proxy - intercepts outgoing traffic and performs token exchange
+        # Uses agent client credentials (from secret) for token exchange
         - name: envoy-proxy
           image: localhost/envoy-with-processor:latest
           imagePullPolicy: IfNotPresent

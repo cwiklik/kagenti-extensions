@@ -57,7 +57,7 @@ A Go HTTP proxy that:
 |----------|----------|-------------|---------|
 | `JWKS_URL` | Yes | URL to fetch public keys for JWT validation | `http://keycloak:8080/realms/demo/.../certs` |
 | `ISSUER` | Yes | Expected token issuer | `http://keycloak:8080/realms/demo` |
-| `AUDIENCE` | No | Expected token audience (if empty, accepts any valid token) | `authproxy` |
+| `AUDIENCE` | No | Expected token audience (if empty, accepts any valid token) | `agent` |
 | `TARGET_SERVICE_URL` | No | URL to forward requests to | `http://target-service:8081` |
 
 #### Transparent Mode (No Audience Validation)
@@ -227,7 +227,7 @@ POST /realms/demo/protocol/openid-connect/token
 Content-Type: application/x-www-form-urlencoded
 
 grant_type=urn:ietf:params:oauth:grant-type:token-exchange
-&client_id=authproxy
+&client_id=agent
 &client_secret=<client-secret>
 &subject_token=<original-jwt>
 &subject_token_type=urn:ietf:params:oauth:token-type:access_token
@@ -267,7 +267,7 @@ metadata:
   name: auth-proxy-config
 stringData:
   TOKEN_URL: "http://keycloak:8080/realms/demo/protocol/openid-connect/token"
-  CLIENT_ID: "authproxy"
+  CLIENT_ID: "agent"
   CLIENT_SECRET: "your-secret"
   TARGET_AUDIENCE: "auth-target"
   TARGET_SCOPES: "openid auth-target-aud"
