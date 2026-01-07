@@ -250,6 +250,7 @@ make load-images
 ### Step 2: Setup AuthBridge Namespace, ServiceAccount, and Config
 
 ```bash
+cd AuthBridge
 kubectl apply -f k8s/auth-proxy-config.yaml
 ```
 
