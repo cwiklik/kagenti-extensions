@@ -94,8 +94,8 @@ PodSpec
 Postgres
 PowerShell
 Pre
-proc
 Proc
+proc
 ProxyInit
 PullPolicy
 RBAC
