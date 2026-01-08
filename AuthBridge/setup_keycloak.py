@@ -280,8 +280,8 @@ def main():
 
 5. The exchanged token has aud: auth-target
 
-No static 'agent' client needed - AuthProxy uses the dynamically registered
-client credentials!
+No pre-configured 'agent' client needed - the agent registers itself
+dynamically and AuthProxy uses the resulting client credentials!
 """)
 
 
