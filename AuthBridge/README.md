@@ -235,20 +235,28 @@ sequenceDiagram
     App-->>Caller: Response
 ```
 
+### Detailed Flow Summary
+
+| Step | From → To | Action |
+|------|-----------|--------|
+| **Initialization Phase** |||
+| 1 | SPIRE → SPIFFE Helper | Issue SVID (SPIFFE credentials) |
+| 2 | SPIFFE Helper → Client Registration | Pass JWT with SPIFFE ID |
+| 3 | Client Registration → Keycloak | Register client (`client_id` = SPIFFE ID) |
+| 4 | Keycloak → Client Registration | Return client credentials (saved to `/shared/`) |
+| **Runtime Phase** |||
+| 5 | Caller → Keycloak | Request token (`aud`: Workload's SPIFFE ID) |
+| 6 | Keycloak → Caller | Return token with workload-aud scope |
+| 7 | Caller → Workload | Pass token to Workload |
+| 8 | Workload → AuthProxy | Call Target Service with Caller's token |
+| 9 | AuthProxy → Keycloak | Token Exchange (using Workload's credentials) |
+| 10 | Keycloak → AuthProxy | Return new token (`aud`: target-service) |
+| 11 | AuthProxy → Target Service | Forward request with exchanged token |
+| 12 | Target Service | Validate token (`aud`: target-service) |
+| 13 | Target Service → Workload | Return "authorized" |
+| 14 | Workload → Caller | Return response |
+
 </details>
-
-### Flow Summary
-
-| Step | Component | Action | What Happens |
-|------|-----------|--------|--------------|
-| 1 | SPIRE → SPIFFE Helper | Issue SVID | Workload receives cryptographic identity (SPIFFE ID) |
-| 2 | Client Registration → Keycloak | Register client | Keycloak client created with `client_id = SPIFFE ID` |
-| 3 | Caller → Keycloak | Get token | Caller obtains token with `aud: Workload's SPIFFE ID` |
-| 4 | Caller → Workload | Pass token | Caller sends request with token to Workload |
-| 5 | Workload → AuthProxy | Outbound call | AuthProxy intercepts, validates token audience |
-| 6 | AuthProxy → Keycloak | Token Exchange | Token exchanged: `aud: SPIFFE ID` → `aud: target-service` |
-| 7 | AuthProxy → Target Service | Forward request | Request sent with exchanged token |
-| 8 | Target Service | Validate & respond | Token validated (`aud: target-service`), returns `"authorized"` |
 
 ## Key Security Properties
 
