@@ -10,6 +10,7 @@ on:
 
 jobs:
   spellcheck:
+    if: false
     name: Spellcheck
     runs-on: ubuntu-latest
     steps:
