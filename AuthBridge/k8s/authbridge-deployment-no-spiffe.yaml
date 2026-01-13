@@ -14,6 +14,42 @@
 #   - Validates tokens with audience "auth-target"
 
 ---
+# =============================================================================
+# NAMESPACE AND SERVICE ACCOUNT
+# =============================================================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: authbridge
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: agent
+  namespace: authbridge
+
+---
+# =============================================================================
+# AUTH PROXY CONFIGURATION
+# CLIENT_ID and CLIENT_SECRET come from /shared/ files (populated by client-registration)
+# TARGET_AUDIENCE and TARGET_SCOPES define the target service for token exchange
+# =============================================================================
+apiVersion: v1
+kind: Secret
+metadata:
+  name: auth-proxy-config
+  namespace: authbridge
+type: Opaque
+stringData:
+  TOKEN_URL: "http://keycloak-service.keycloak.svc.cluster.local:8080/realms/demo/protocol/openid-connect/token"
+  TARGET_AUDIENCE: "auth-target"
+  TARGET_SCOPES: "openid auth-target-aud"
+
+---
+# =============================================================================
+# CONFIGMAPS
+# =============================================================================
 # Shared ConfigMap for environment variables
 apiVersion: v1
 kind: ConfigMap
@@ -75,6 +111,7 @@ data:
                     route:
                       cluster: original_destination
               http_filters:
+              # Lua filter to inject token exchange credentials as headers
               - name: envoy.filters.http.lua
                 typed_config:
                   "@type": type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
@@ -83,9 +120,8 @@ data:
                       local token_url = os.getenv("TOKEN_URL")
                       local client_id = os.getenv("CLIENT_ID")
                       local client_secret = os.getenv("CLIENT_SECRET")
-                      local target_audience = os.getenv("TARGET_AUDIENCE")
-                      local target_scopes = os.getenv("TARGET_SCOPES")
 
+                      -- Add token exchange credentials from environment
                       if token_url ~= nil and token_url ~= "" then
                         request_handle:headers():add("x-token-url", token_url)
                       end
@@ -94,12 +130,6 @@ data:
                       end
                       if client_secret ~= nil and client_secret ~= "" then
                         request_handle:headers():add("x-client-secret", client_secret)
-                      end
-                      if target_audience ~= nil and target_audience ~= "" then
-                        request_handle:headers():add("x-target-audience", target_audience)
-                      end
-                      if target_scopes ~= nil and target_scopes ~= "" then
-                        request_handle:headers():add("x-target-scopes", target_scopes)
                       end
                     end
               - name: envoy.filters.http.ext_proc
@@ -326,21 +356,12 @@ spec:
             - containerPort: 9090
               name: ext-proc
           env:
+            # Token exchange configuration
             - name: TOKEN_URL
               valueFrom:
                 secretKeyRef:
                   name: auth-proxy-config
                   key: TOKEN_URL
-            - name: CLIENT_ID
-              valueFrom:
-                secretKeyRef:
-                  name: auth-proxy-config
-                  key: CLIENT_ID
-            - name: CLIENT_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: auth-proxy-config
-                  key: CLIENT_SECRET
             - name: TARGET_AUDIENCE
               valueFrom:
                 secretKeyRef:
@@ -351,9 +372,17 @@ spec:
                 secretKeyRef:
                   name: auth-proxy-config
                   key: TARGET_SCOPES
+            # Dynamic credentials from client-registration (via files)
+            - name: CLIENT_ID_FILE
+              value: "/shared/client-id.txt"
+            - name: CLIENT_SECRET_FILE
+              value: "/shared/client-secret.txt"
           volumeMounts:
             - name: envoy-config
               mountPath: /etc/envoy
+              readOnly: true
+            - name: shared-data
+              mountPath: /shared
               readOnly: true
           resources:
             limits:

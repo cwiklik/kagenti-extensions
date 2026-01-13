@@ -1,22 +1,65 @@
 # AuthBridge Demo Deployment (with SPIFFE)
 # 
 # This deployment demonstrates:
-# 1. Caller pod with automatic client registration using SPIFFE ID
+# 1. Agent pod with automatic client registration using SPIFFE ID
 # 2. AuthProxy sidecar intercepts outgoing requests and exchanges tokens
 # 3. Auth Target (target server) validates the exchanged tokens
 #
-# Flow: Caller -> AuthProxy (sidecar, exchanges token) -> Auth Target (validates token)
+# Flow:
+#   0. SPIFFE Helper obtains SVID (Agent's identity = SPIFFE ID)
+#   1. Client Registration registers Agent with Keycloak
+#   2. Caller gets token with aud: Agent's SPIFFE ID
+#   3. Caller passes token to Agent
+#   4. Agent calls Auth Target with Caller's token
+#   5. AuthProxy intercepts, validates, and exchanges token (using Agent's credentials)
+#   6. Auth Target validates exchanged token (aud: auth-target)
 #
-# Pod 1: Caller Pod
-#   - Caller: The calling application
+# Pod 1: Agent Pod
+#   - Agent: The agent application (receives tokens from Callers)
 #   - SPIFFE Helper: Provides SPIFFE credentials (SVID)
-#   - Client Registration: Registers caller with Keycloak using SPIFFE ID
+#   - Client Registration: Registers Agent with Keycloak using SPIFFE ID
 #   - AuthProxy + Envoy: Intercepts outgoing traffic and exchanges tokens
 #
 # Pod 2: Auth Target (Target Server)
 #   - Validates tokens with audience "auth-target"
 
 ---
+# =============================================================================
+# NAMESPACE AND SERVICE ACCOUNT
+# =============================================================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: authbridge
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: agent
+  namespace: authbridge
+
+---
+# =============================================================================
+# AUTH PROXY CONFIGURATION
+# CLIENT_ID and CLIENT_SECRET come from /shared/ files (populated by client-registration)
+# TARGET_AUDIENCE and TARGET_SCOPES define the target service for token exchange
+# =============================================================================
+apiVersion: v1
+kind: Secret
+metadata:
+  name: auth-proxy-config
+  namespace: authbridge
+type: Opaque
+stringData:
+  TOKEN_URL: "http://keycloak-service.keycloak.svc.cluster.local:8080/realms/demo/protocol/openid-connect/token"
+  TARGET_AUDIENCE: "auth-target"
+  TARGET_SCOPES: "openid auth-target-aud"
+
+---
+# =============================================================================
+# CONFIGMAPS
+# =============================================================================
 # Shared ConfigMap for environment variables
 apiVersion: v1
 kind: ConfigMap
@@ -97,7 +140,7 @@ data:
                     route:
                       cluster: original_destination
               http_filters:
-              # Lua filter to inject environment variables as headers
+              # Lua filter to inject token exchange credentials as headers
               - name: envoy.filters.http.lua
                 typed_config:
                   "@type": type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
@@ -106,9 +149,8 @@ data:
                       local token_url = os.getenv("TOKEN_URL")
                       local client_id = os.getenv("CLIENT_ID")
                       local client_secret = os.getenv("CLIENT_SECRET")
-                      local target_audience = os.getenv("TARGET_AUDIENCE")
-                      local target_scopes = os.getenv("TARGET_SCOPES")
 
+                      -- Add token exchange credentials from environment
                       if token_url ~= nil and token_url ~= "" then
                         request_handle:headers():add("x-token-url", token_url)
                       end
@@ -117,12 +159,6 @@ data:
                       end
                       if client_secret ~= nil and client_secret ~= "" then
                         request_handle:headers():add("x-client-secret", client_secret)
-                      end
-                      if target_audience ~= nil and target_audience ~= "" then
-                        request_handle:headers():add("x-target-audience", target_audience)
-                      end
-                      if target_scopes ~= nil and target_scopes ~= "" then
-                        request_handle:headers():add("x-target-scopes", target_scopes)
                       end
                     end
               # External processor to mutate headers (token exchange)
@@ -162,31 +198,31 @@ data:
 
 ---
 # =============================================================================
-# CALLER POD
-# Contains: Caller, SPIFFE Helper, Client Registration, AuthProxy
+# AGENT POD
+# Contains: Agent, SPIFFE Helper, Client Registration, AuthProxy
 # =============================================================================
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: caller
+  name: agent
   namespace: authbridge
   labels:
-    app: caller
+    app: agent
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: caller
+      app: agent
   template:
     metadata:
       labels:
-        app: caller
+        app: agent
         istio.io/dataplane-mode: none
       annotations:
         ambient.istio.io/redirection: disabled
         sidecar.istio.io/inject: "false"
     spec:
-      serviceAccountName: caller
+      serviceAccountName: agent
       imagePullSecrets:
         - name: ghcr-secret
       initContainers:
@@ -289,16 +325,16 @@ spec:
               mountPath: /shared
             - name: svid-output
               mountPath: /opt
-        # Caller - the calling application (uses netshoot with curl and jq)
-        # Use: kubectl exec -it deployment/caller -n authbridge -c caller -- sh
+        # Agent - the agent application (receives tokens from Callers, calls external services)
+        # Use: kubectl exec -it deployment/agent -n authbridge -c agent -- sh
         # Then: curl -H "Authorization: Bearer $TOKEN" http://auth-target-service:8081/test
-        - name: caller
+        - name: agent
           image: nicolaka/netshoot:latest
           command:
             - /bin/sh
             - -c
             - |
-              echo "Caller pod ready!"
+              echo "Agent pod ready!"
               echo "Waiting for client registration to complete..."
               while [ ! -f /shared/client-secret.txt ] || [ ! -f /shared/client-id.txt ]; do
                 sleep 2
@@ -309,14 +345,20 @@ spec:
               
               echo ""
               echo "============================================"
-              echo "Client registered with Keycloak!"
-              echo "Client ID: $CLIENT_ID"
+              echo "Agent registered with Keycloak!"
+              echo "Client ID (Agent's SPIFFE ID): $CLIENT_ID"
               echo "Client Secret: $CLIENT_SECRET"
               echo "============================================"
               echo ""
-              echo "To test, exec into this container and run:"
+              echo "=== AuthBridge Flow ==="
+              echo "1. Caller gets token with aud: $CLIENT_ID (this Agent's identity)"
+              echo "2. Caller passes token to Agent"
+              echo "3. Agent calls Auth Target with Caller's token"
+              echo "4. AuthProxy exchanges token for aud: auth-target"
               echo ""
-              echo "  # Get a token from Keycloak"
+              echo "To test (simulating a Caller providing a token):"
+              echo ""
+              echo "  # Get a token (as if Caller obtained it)"
               echo "  CLIENT_ID=\$(cat /shared/client-id.txt)"
               echo "  CLIENT_SECRET=\$(cat /shared/client-secret.txt)"
               echo "  TOKEN=\$(curl -sX POST http://keycloak-service.keycloak.svc:8080/realms/demo/protocol/openid-connect/token \\"
@@ -324,7 +366,10 @@ spec:
               echo "    -d \"client_id=\$CLIENT_ID\" \\"
               echo "    -d \"client_secret=\$CLIENT_SECRET\" | jq -r '.access_token')"
               echo ""
-              echo "  # Call auth-target through AuthProxy"
+              echo "  # Verify token audience (should be Agent's SPIFFE ID)"
+              echo "  echo \$TOKEN | cut -d'.' -f2 | base64 -d 2>/dev/null | jq '{aud, azp}'"
+              echo ""
+              echo "  # Agent calls auth-target (AuthProxy will exchange token)"
               echo "  curl -H \"Authorization: Bearer \$TOKEN\" http://auth-target-service:8081/test"
               echo ""
               # Keep container running
@@ -373,6 +418,8 @@ spec:
               cpu: 100m
               memory: 128Mi
         # Envoy proxy - intercepts outgoing traffic and performs token exchange
+        # Uses dynamic credentials from /shared/ (populated by client-registration)
+        # The SPIFFE ID is both the client_id AND the token audience, enabling exchange
         - name: envoy-proxy
           image: localhost/envoy-with-processor:latest
           imagePullPolicy: IfNotPresent
@@ -387,21 +434,12 @@ spec:
             - containerPort: 9090
               name: ext-proc
           env:
+            # Token exchange configuration
             - name: TOKEN_URL
               valueFrom:
                 secretKeyRef:
                   name: auth-proxy-config
                   key: TOKEN_URL
-            - name: CLIENT_ID
-              valueFrom:
-                secretKeyRef:
-                  name: auth-proxy-config
-                  key: CLIENT_ID
-            - name: CLIENT_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: auth-proxy-config
-                  key: CLIENT_SECRET
             - name: TARGET_AUDIENCE
               valueFrom:
                 secretKeyRef:
@@ -412,9 +450,17 @@ spec:
                 secretKeyRef:
                   name: auth-proxy-config
                   key: TARGET_SCOPES
+            # Dynamic credentials from client-registration (via files)
+            - name: CLIENT_ID_FILE
+              value: "/shared/client-id.txt"
+            - name: CLIENT_SECRET_FILE
+              value: "/shared/client-secret.txt"
           volumeMounts:
             - name: envoy-config
               mountPath: /etc/envoy
+              readOnly: true
+            - name: shared-data
+              mountPath: /shared
               readOnly: true
           resources:
             limits:
