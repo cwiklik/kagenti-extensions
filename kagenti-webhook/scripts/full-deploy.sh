@@ -70,11 +70,10 @@ webhooks:
           - kube-public
           - kube-node-lease
           - ${NAMESPACE}
-      # trigger for namespaces not explicitly disabled
-      - key: kagenti-enabled
-        operator: NotIn
-        values:
-          - "false"
+    matchLabels:
+      # Only trigger webhook for namespaces that have opted-in
+      # This aligns with NeedsMutation() which requires kagenti-enabled: true
+      kagenti-enabled: "true"
   rules:
   - operations:
     - CREATE

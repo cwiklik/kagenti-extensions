@@ -172,11 +172,6 @@ func (w *AuthBridgeWebhook) isAlreadyInjected(podSpec *corev1.PodSpec) bool {
 			return true
 		}
 	}
-	for _, initContainer := range podSpec.InitContainers {
-		if initContainer.Name == "proxy-init" {
-			return true
-		}
-	}
 	return false
 }
 

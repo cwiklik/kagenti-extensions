@@ -92,10 +92,9 @@ func (m *PodMutator) MutatePodSpec(ctx context.Context, podSpec *corev1.PodSpec,
 	return nil
 }
 
-// main entry point for pod mutations
 // It checks if injection should occur and performs all necessary mutations
 func (m *PodMutator) InjectAuthBridge(ctx context.Context, podSpec *corev1.PodSpec, namespace, crName string, labels map[string]string) (bool, error) {
-	mutatorLog.Info("MutatePodSpec called", "namespace", namespace, "crName", crName, "annotations", labels)
+	mutatorLog.Info("InjectAuthBridge called", "namespace", namespace, "crName", crName, "labels", labels)
 
 	shouldMutate, err := m.NeedsMutation(ctx, namespace, labels)
 	if err != nil {
@@ -170,11 +169,11 @@ func (m *PodMutator) NeedsMutation(ctx context.Context, namespace string, labels
 	// If label exists, respect its value (opt-in or opt-out)
 	if exists {
 		if value == AuthBridgeInjectValue {
-			mutatorLog.Info("CR label opt-in detected ")
+			mutatorLog.Info("Workload label opt-in detected ")
 			return true, nil
 		}
 		// Any other value (including "disabled", "false", etc.) is opt-out
-		mutatorLog.Info("CR label opt-out detected ")
+		mutatorLog.Info("Workload label opt-out detected ")
 		return false, nil
 	}
 
