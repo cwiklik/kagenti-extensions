@@ -249,6 +249,21 @@ data:
         lb_policy: CLUSTER_PROVIDED
 
 ---
+# Routes configuration for per-host token exchange settings
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: authproxy-routes
+  namespace: authbridge
+data:
+  routes.yaml: |
+    # Example route configurations:
+    # - host: "github.mcp.local"
+    #   target_audience: "https://api.github.com"
+    # - host: "*.internal.svc.cluster.local"
+    #   passthrough: true
+
+---
 # =============================================================================
 # AGENT POD
 # Contains: Agent, SPIFFE Helper, Client Registration, AuthProxy
@@ -505,12 +520,18 @@ spec:
               value: "/shared/client-id.txt"
             - name: CLIENT_SECRET_FILE
               value: "/shared/client-secret.txt"
+            # Route-based configuration
+            - name: ROUTES_CONFIG_PATH
+              value: "/etc/authproxy/routes.yaml"
           volumeMounts:
             - name: envoy-config
               mountPath: /etc/envoy
               readOnly: true
             - name: shared-data
               mountPath: /shared
+              readOnly: true
+            - name: routes-config
+              mountPath: /etc/authproxy
               readOnly: true
           resources:
             limits:
@@ -533,6 +554,9 @@ spec:
         - name: envoy-config
           configMap:
             name: envoy-config
+        - name: routes-config
+          configMap:
+            name: authproxy-routes
 
 ---
 # =============================================================================
