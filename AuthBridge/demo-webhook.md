@@ -16,23 +16,23 @@ The kagenti-webhook watches for deployments with the `kagenti.io/inject: enabled
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                        Agent Pod                                │
-│  ┌─────────────┐  ┌──────────────┐  ┌─────────────────────────┐ │
-│  │   agent     │  │spiffe-helper │  │kagenti-client-registration│
-│  │ (your app)  │  │              │  │                         │ │
-│  └──────┬──────┘  └──────────────┘  └─────────────────────────┘ │
-│         │                                                       │
-│         │ HTTP Request with Token (aud: agent-spiffe-id)        │
-│         ▼                                                       │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │                    envoy-proxy                           │   │
-│  │  1. Intercepts outbound traffic (via iptables)           │   │
-│  │  2. Extracts Bearer token from Authorization header      │   │
-│  │  3. Exchanges token via Keycloak (aud: auth-target)      │   │
-│  │  4. Replaces token in request                            │   │
-│  └──────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────┐
+│                        Agent Pod                                   │
+│  ┌─────────────┐  ┌──────────────┐  ┌────────────────────────────┐ │
+│  │   agent     │  │spiffe-helper │  │keycloak-client-registration│ |
+│  │ (your app)  │  │              │  │                            │ │
+│  └──────┬──────┘  └──────────────┘  └────────────────────────────┘ │
+│         │                                                          │
+│         │ HTTP Request with Token (aud: agent-spiffe-id)           │
+│         ▼                                                          │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │                    envoy-proxy                              │   │
+│  │  1. Intercepts outbound traffic (via iptables)              │   │
+│  │  2. Extracts Bearer token from Authorization header         │   │
+│  │  3. Exchanges token via Keycloak (aud: auth-target)         │   │
+│  │  4. Replaces token in request                               │   │
+│  └─────────────────────────────────────────────────────────────┘   │
+└────────────────────────────────────────────────────────────────────┘
                               │
                               │ HTTP Request with Exchanged Token
                               ▼
@@ -55,17 +55,20 @@ The kagenti-webhook watches for deployments with the `kagenti.io/inject: enabled
 
 ---
 
-## Quick Start (Automated)
+## Deploy Webhook
 
-Deploy the webhook and prerequisites with a single command:
+Deploy the webhook and its prerequisites with a single command:
 
 ```bash
 cd kagenti-webhook
 
 # Deploy webhook + create namespace + apply ConfigMaps
 AUTHBRIDGE_DEMO=true ./scripts/full-deploy.sh
+```
 
-# Or specify a custom namespace
+Or specify a custom namespace:
+
+```bash
 AUTHBRIDGE_DEMO=true AUTHBRIDGE_NAMESPACE=myapp ./scripts/full-deploy.sh
 ```
 
@@ -82,7 +85,7 @@ Then continue with:
 
 ---
 
-## Manual Deployment Steps
+## Demo Deployment Steps
 
 ### Step 1: Setup Keycloak
 
@@ -107,7 +110,10 @@ This creates:
 - `auth-target-aud` scope (adds "auth-target" to exchanged tokens)
 - `alice` demo user (for testing subject preservation)
 
-### Step 2: Create Namespace and ConfigMaps (Skip if using Quick Start)
+### Step 2: Create Namespace and ConfigMaps (Optional, if using `team1` namespace)
+
+The `team1` namespace and all the configmaps are deployed during `./scripts/full-deploy.sh`
+script execution.
 
 ```bash
 # Create namespace if it doesn't exist
@@ -261,7 +267,7 @@ kubectl logs deployment/agent -n team1 -c spiffe-helper
 ### Common Issues
 
 1. **"Client not enabled to retrieve service account"**
-   - Run Step 4 to enable service accounts for the dynamically registered client
+   - Run Step 6 to enable service accounts for the dynamically registered client
 
 2. **"Requested audience not available: auth-target"**
    - Ensure `TARGET_SCOPES` in `authbridge-config` includes `auth-target-aud`

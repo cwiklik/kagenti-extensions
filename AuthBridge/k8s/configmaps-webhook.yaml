@@ -20,8 +20,8 @@ data:
   # Demo/development only: do NOT use hardcoded admin credentials in production.
   # For production deployments, supply these via a Kubernetes Secret and reference
   # them from your Pod/Deployment using env.valueFrom.secretKeyRef instead of this ConfigMap.
-  KEYCLOAK_ADMIN_USERNAME: "CHANGE_ME_ADMIN_USERNAME"
-  KEYCLOAK_ADMIN_PASSWORD: "CHANGE_ME_ADMIN_PASSWORD"
+  KEYCLOAK_ADMIN_USERNAME: "admin"
+  KEYCLOAK_ADMIN_PASSWORD: "admin"
 
 ---
 # authbridge-config ConfigMap - Used by envoy-proxy for token exchange
