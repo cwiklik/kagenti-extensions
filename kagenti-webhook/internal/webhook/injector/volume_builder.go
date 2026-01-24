@@ -20,7 +20,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 )
 
-// creates all volumes required for sidecar containers
+// BuildRequiredVolumes creates all volumes required for sidecar containers (with SPIRE)
 func BuildRequiredVolumes() []corev1.Volume {
 	// Helper for pointer to bool
 	isReadOnly := true
@@ -56,6 +56,39 @@ func BuildRequiredVolumes() []corev1.Volume {
 			Name: "svid-output",
 			VolumeSource: corev1.VolumeSource{
 				EmptyDir: &corev1.EmptyDirVolumeSource{},
+			},
+		},
+		{
+			Name: "envoy-config",
+			VolumeSource: corev1.VolumeSource{
+				ConfigMap: &corev1.ConfigMapVolumeSource{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: "envoy-config",
+					},
+				},
+			},
+		},
+	}
+}
+
+// BuildRequiredVolumesNoSpire creates volumes required for sidecar containers without SPIRE
+// This excludes spire-agent-socket, spiffe-helper-config, and svid-output volumes
+func BuildRequiredVolumesNoSpire() []corev1.Volume {
+	return []corev1.Volume{
+		{
+			Name: "shared-data",
+			VolumeSource: corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{},
+			},
+		},
+		{
+			Name: "envoy-config",
+			VolumeSource: corev1.VolumeSource{
+				ConfigMap: &corev1.ConfigMapVolumeSource{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: "envoy-config",
+					},
+				},
 			},
 		},
 	}

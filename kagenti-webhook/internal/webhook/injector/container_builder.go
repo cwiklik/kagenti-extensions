@@ -17,13 +17,30 @@ limitations under the License.
 package injector
 
 import (
+	"fmt"
+
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/utils/ptr"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-var builderLog = logf.Log.WithName("namespace-checker")
+var builderLog = logf.Log.WithName("container-builder")
+
+const (
+	// Container names for AuthBridge sidecars
+	EnvoyProxyContainerName = "envoy-proxy"
+	ProxyInitContainerName  = "proxy-init"
+
+	// Default images - use localhost for local Kind/minikube clusters
+	// TODO: Update to ghcr.io/kagenti/kagenti-extensions/ once images are published
+	DefaultEnvoyImage     = "localhost/envoy-with-processor:latest"
+	DefaultProxyInitImage = "localhost/proxy-init:latest"
+
+	// Envoy proxy configuration
+	EnvoyProxyUID  = 1337
+	EnvoyProxyPort = 15123
+)
 
 func BuildSpiffeHelperContainer() corev1.Container {
 	builderLog.Info("building SpiffyHelper Container")
@@ -69,9 +86,139 @@ func BuildSpiffeHelperContainer() corev1.Container {
 }
 
 func BuildClientRegistrationContainer(clientID, name, namespace string) corev1.Container {
-	builderLog.Info("building ClientRegistration Container")
+	// Default to SPIRE enabled for backward compatibility
+	return BuildClientRegistrationContainerWithSpireOption(clientID, name, namespace, true)
+}
+
+// BuildClientRegistrationContainerWithSpireOption creates the client registration container
+// with optional SPIRE support
+func BuildClientRegistrationContainerWithSpireOption(clientID, name, namespace string, spireEnabled bool) corev1.Container {
+	builderLog.Info("building ClientRegistration Container", "spireEnabled", spireEnabled)
 
 	clientId := namespace + "/" + name
+
+	// Base environment variables
+	env := []corev1.EnvVar{
+		{
+			Name:  "SPIRE_ENABLED",
+			Value: fmt.Sprintf("%t", spireEnabled),
+		},
+		{
+			Name: "KEYCLOAK_URL",
+			ValueFrom: &corev1.EnvVarSource{
+				ConfigMapKeyRef: &corev1.ConfigMapKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: "environments",
+					},
+					Key:      "KEYCLOAK_URL",
+					Optional: ptr.To(true),
+				},
+			},
+		},
+		{
+			Name: "KEYCLOAK_REALM",
+			ValueFrom: &corev1.EnvVarSource{
+				ConfigMapKeyRef: &corev1.ConfigMapKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: "environments",
+					},
+					Key: "KEYCLOAK_REALM",
+				},
+			},
+		},
+		{
+			Name: "KEYCLOAK_ADMIN_USERNAME",
+			ValueFrom: &corev1.EnvVarSource{
+				ConfigMapKeyRef: &corev1.ConfigMapKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: "environments",
+					},
+					Key: "KEYCLOAK_ADMIN_USERNAME",
+				},
+			},
+		},
+		{
+			Name: "KEYCLOAK_ADMIN_PASSWORD",
+			ValueFrom: &corev1.EnvVarSource{
+				ConfigMapKeyRef: &corev1.ConfigMapKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: "environments",
+					},
+					Key: "KEYCLOAK_ADMIN_PASSWORD",
+				},
+			},
+		},
+		{
+			Name:  "CLIENT_NAME",
+			Value: clientId,
+		},
+		{
+			Name:  "SECRET_FILE_PATH",
+			Value: "/shared/client-secret.txt",
+		},
+	}
+
+	// Volume mounts depend on SPIRE enablement
+	var volumeMounts []corev1.VolumeMount
+	if spireEnabled {
+		volumeMounts = []corev1.VolumeMount{
+			{
+				Name:      "svid-output",
+				MountPath: "/opt",
+			},
+			{
+				Name:      "shared-data",
+				MountPath: "/shared",
+			},
+		}
+	} else {
+		volumeMounts = []corev1.VolumeMount{
+			{
+				Name:      "shared-data",
+				MountPath: "/shared",
+			},
+		}
+	}
+
+	// Build the command based on SPIRE enablement
+	// When SPIRE is enabled, extract client ID from JWT
+	// When SPIRE is disabled, use CLIENT_NAME as the client ID
+	var command string
+	if spireEnabled {
+		command = `
+echo "Waiting for SPIFFE credentials..."
+while [ ! -f /opt/jwt_svid.token ]; do
+  echo "waiting for SVID"
+  sleep 1
+done
+echo "SPIFFE credentials ready!"
+
+# Extract client ID (SPIFFE ID) from JWT and save to file
+JWT_PAYLOAD=$(cat /opt/jwt_svid.token | cut -d'.' -f2)
+CLIENT_ID=$(echo "${JWT_PAYLOAD}==" | base64 -d 2>/dev/null | python -c "import sys,json; print(json.load(sys.stdin).get('sub',''))")
+echo "$CLIENT_ID" > /shared/client-id.txt
+echo "Client ID (SPIFFE ID): $CLIENT_ID"
+
+echo "Starting client registration..."
+python client_registration.py
+echo "Client registration complete!"
+tail -f /dev/null
+`
+	} else {
+		command = `
+echo "SPIRE disabled - using static client ID"
+
+# Use CLIENT_NAME as the client ID
+echo "$CLIENT_NAME" > /shared/client-id.txt
+echo "Client ID: $CLIENT_NAME"
+
+echo "Starting client registration..."
+python client_registration.py
+echo "Client registration complete!"
+tail -f /dev/null
+`
+	}
+
 	return corev1.Container{
 		Name: ClientRegistrationContainerName,
 		// // Use the following image after we have solidified kagenti-extensions
@@ -91,79 +238,155 @@ func BuildClientRegistrationContainer(clientID, name, namespace string) corev1.C
 		Command: []string{
 			"/bin/sh",
 			"-c",
-			`if [ "$SPIRE_ENABLED" = "true" ]; then while [ ! -f /opt/jwt_svid.token ]; do echo waiting for SVID; sleep 1; done; fi; python client_registration.py; tail -f /dev/null`,
+			command,
+		},
+		Env:          env,
+		VolumeMounts: volumeMounts,
+	}
+}
+
+// BuildEnvoyProxyContainer creates the envoy-proxy sidecar container
+// This container intercepts outbound traffic and performs token exchange via ext-proc
+func BuildEnvoyProxyContainer() corev1.Container {
+	builderLog.Info("building EnvoyProxy Container")
+
+	return corev1.Container{
+		Name:            EnvoyProxyContainerName,
+		Image:           DefaultEnvoyImage,
+		ImagePullPolicy: corev1.PullIfNotPresent,
+		Resources: corev1.ResourceRequirements{
+			Limits: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("200m"),
+				corev1.ResourceMemory: resource.MustParse("256Mi"),
+			},
+			Requests: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("50m"),
+				corev1.ResourceMemory: resource.MustParse("64Mi"),
+			},
+		},
+		Ports: []corev1.ContainerPort{
+			{
+				Name:          "envoy-outbound",
+				ContainerPort: EnvoyProxyPort,
+				Protocol:      corev1.ProtocolTCP,
+			},
+			{
+				Name:          "envoy-admin",
+				ContainerPort: 9901,
+				Protocol:      corev1.ProtocolTCP,
+			},
+			{
+				Name:          "ext-proc",
+				ContainerPort: 9090,
+				Protocol:      corev1.ProtocolTCP,
+			},
 		},
 		Env: []corev1.EnvVar{
 			{
-				Name: "SPIRE_ENABLED",
+				Name: "TOKEN_URL",
 				ValueFrom: &corev1.EnvVarSource{
 					ConfigMapKeyRef: &corev1.ConfigMapKeySelector{
 						LocalObjectReference: corev1.LocalObjectReference{
-							Name: "environments",
+							Name: "authbridge-config",
 						},
-						Key: "SPIRE_ENABLED",
-					},
-				},
-			},
-			{
-				Name: "KEYCLOAK_URL",
-				ValueFrom: &corev1.EnvVarSource{
-					ConfigMapKeyRef: &corev1.ConfigMapKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{
-							Name: "environments",
-						},
-						Key:      "KEYCLOAK_URL",
+						Key:      "TOKEN_URL",
 						Optional: ptr.To(true),
 					},
 				},
 			},
 			{
-				Name: "KEYCLOAK_REALM",
+				Name: "TARGET_AUDIENCE",
 				ValueFrom: &corev1.EnvVarSource{
 					ConfigMapKeyRef: &corev1.ConfigMapKeySelector{
 						LocalObjectReference: corev1.LocalObjectReference{
-							Name: "environments",
+							Name: "authbridge-config",
 						},
-						Key: "KEYCLOAK_REALM",
+						Key:      "TARGET_AUDIENCE",
+						Optional: ptr.To(true),
 					},
 				},
 			},
 			{
-				Name: "KEYCLOAK_ADMIN_USERNAME",
+				Name: "TARGET_SCOPES",
 				ValueFrom: &corev1.EnvVarSource{
 					ConfigMapKeyRef: &corev1.ConfigMapKeySelector{
 						LocalObjectReference: corev1.LocalObjectReference{
-							Name: "environments",
+							Name: "authbridge-config",
 						},
-						Key: "KEYCLOAK_ADMIN_USERNAME",
+						Key:      "TARGET_SCOPES",
+						Optional: ptr.To(true),
 					},
 				},
 			},
 			{
-				Name: "KEYCLOAK_ADMIN_PASSWORD",
-				ValueFrom: &corev1.EnvVarSource{
-					ConfigMapKeyRef: &corev1.ConfigMapKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{
-							Name: "environments",
-						},
-						Key: "KEYCLOAK_ADMIN_PASSWORD",
-					},
-				},
+				Name:  "CLIENT_ID_FILE",
+				Value: "/shared/client-id.txt",
 			},
 			{
-				Name:  "CLIENT_NAME",
-				Value: clientId,
+				Name:  "CLIENT_SECRET_FILE",
+				Value: "/shared/client-secret.txt",
 			},
+		},
+		SecurityContext: &corev1.SecurityContext{
+			RunAsUser:  ptr.To(int64(EnvoyProxyUID)),
+			RunAsGroup: ptr.To(int64(EnvoyProxyUID)),
 		},
 		VolumeMounts: []corev1.VolumeMount{
 			{
-				Name:      "svid-output",
-				MountPath: "/opt",
+				Name:      "envoy-config",
+				MountPath: "/etc/envoy",
+				ReadOnly:  true,
 			},
 			{
-				// This is how client registration accesses the SVID
 				Name:      "shared-data",
 				MountPath: "/shared",
+				ReadOnly:  true,
+			},
+		},
+	}
+}
+
+// BuildProxyInitContainer creates the init container that sets up iptables
+// to redirect outbound traffic to the Envoy proxy
+func BuildProxyInitContainer() corev1.Container {
+	builderLog.Info("building ProxyInit Container")
+
+	return corev1.Container{
+		Name:            ProxyInitContainerName,
+		Image:           DefaultProxyInitImage,
+		ImagePullPolicy: corev1.PullIfNotPresent,
+		Resources: corev1.ResourceRequirements{
+			Limits: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("10m"),
+				corev1.ResourceMemory: resource.MustParse("10Mi"),
+			},
+			Requests: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("10m"),
+				corev1.ResourceMemory: resource.MustParse("10Mi"),
+			},
+		},
+		Env: []corev1.EnvVar{
+			{
+				Name:  "PROXY_PORT",
+				Value: "15123",
+			},
+			{
+				Name:  "PROXY_UID",
+				Value: "1337",
+			},
+			{
+				Name:  "OUTBOUND_PORTS_EXCLUDE",
+				Value: "8080", // Exclude Keycloak port from redirect
+			},
+		},
+		SecurityContext: &corev1.SecurityContext{
+			RunAsUser:    ptr.To(int64(0)),
+			RunAsNonRoot: ptr.To(false),
+			Capabilities: &corev1.Capabilities{
+				Add: []corev1.Capability{
+					"NET_ADMIN",
+					"NET_RAW",
+				},
 			},
 		},
 	}

@@ -40,6 +40,15 @@ const (
 	AuthBridgeInjectLabel   = "kagenti.io/inject"
 	AuthBridgeInjectValue   = "enabled"
 	AuthBridgeDisabledValue = "disabled"
+
+	// Label selector for SPIRE enablement
+	SpireEnableLabel   = "kagenti.io/spire"
+	SpireEnabledValue  = "enabled"
+	SpireDisabledValue = "disabled"
+
+	// Istio exclusion annotations
+	IstioSidecarInjectAnnotation = "sidecar.istio.io/inject"
+	AmbientRedirectionAnnotation = "ambient.istio.io/redirection"
 )
 
 type PodMutator struct {
@@ -92,6 +101,16 @@ func (m *PodMutator) MutatePodSpec(ctx context.Context, podSpec *corev1.PodSpec,
 	return nil
 }
 
+// IsSpireEnabled checks if SPIRE is enabled via the kagenti.io/spire label
+func IsSpireEnabled(labels map[string]string) bool {
+	value, exists := labels[SpireEnableLabel]
+	if !exists {
+		// Default to disabled if label is not present
+		return false
+	}
+	return value == SpireEnabledValue
+}
+
 // It checks if injection should occur and performs all necessary mutations
 func (m *PodMutator) InjectAuthBridge(ctx context.Context, podSpec *corev1.PodSpec, namespace, crName string, labels map[string]string) (bool, error) {
 	mutatorLog.Info("InjectAuthBridge called", "namespace", namespace, "crName", crName, "labels", labels)
@@ -107,19 +126,32 @@ func (m *PodMutator) InjectAuthBridge(ctx context.Context, podSpec *corev1.PodSp
 		return false, nil // Skip mutation
 	}
 
-	mutatorLog.Info("Mutation enabled - injecting sidecars and volumes", "namespace", namespace, "crName", crName)
+	// Check if SPIRE is enabled
+	spireEnabled := IsSpireEnabled(labels)
+	mutatorLog.Info("Mutation enabled - injecting sidecars, init containers, and volumes",
+		"namespace", namespace, "crName", crName, "spireEnabled", spireEnabled)
 
-	if err := m.InjectSidecars(podSpec, namespace, crName); err != nil {
+	// Inject init containers (proxy-init for iptables setup)
+	if err := m.InjectInitContainers(podSpec); err != nil {
+		mutatorLog.Error(err, "Failed to inject init containers", "namespace", namespace, "crName", crName)
+		return false, fmt.Errorf("failed to inject init containers: %w", err)
+	}
+
+	if err := m.InjectSidecarsWithSpireOption(podSpec, namespace, crName, spireEnabled); err != nil {
 		mutatorLog.Error(err, "Failed to inject sidecars", "namespace", namespace, "crName", crName)
 		return false, fmt.Errorf("failed to inject sidecars: %w", err)
 	}
 
-	if err := m.InjectVolumes(podSpec); err != nil {
+	if err := m.InjectVolumesWithSpireOption(podSpec, spireEnabled); err != nil {
 		mutatorLog.Error(err, "Failed to inject volumes", "namespace", namespace, "crName", crName)
 		return false, fmt.Errorf("failed to inject volumes: %w", err)
 	}
 
-	mutatorLog.Info("Successfully mutated pod spec", "namespace", namespace, "crName", crName, "containers", len(podSpec.Containers), "volumes", len(podSpec.Volumes))
+	mutatorLog.Info("Successfully mutated pod spec", "namespace", namespace, "crName", crName,
+		"containers", len(podSpec.Containers),
+		"initContainers", len(podSpec.InitContainers),
+		"volumes", len(podSpec.Volumes),
+		"spireEnabled", spireEnabled)
 	return true, nil
 }
 
@@ -182,33 +214,77 @@ func (m *PodMutator) NeedsMutation(ctx context.Context, namespace string, labels
 	return IsNamespaceInjectionEnabled(ctx, m.Client, namespace, m.NamespaceLabel)
 }
 func (m *PodMutator) InjectSidecars(podSpec *corev1.PodSpec, namespace, crName string) error {
+	// Default to SPIRE enabled for backward compatibility
+	return m.InjectSidecarsWithSpireOption(podSpec, namespace, crName, true)
+}
+
+// InjectSidecarsWithSpireOption injects sidecars with optional SPIRE support
+func (m *PodMutator) InjectSidecarsWithSpireOption(podSpec *corev1.PodSpec, namespace, crName string, spireEnabled bool) error {
 	if podSpec.Containers == nil {
 		podSpec.Containers = []corev1.Container{}
 	}
 
-	// Check and inject spiffe-helper sidecar
-	if !containerExists(podSpec.Containers, SpiffeHelperContainerName) {
-		podSpec.Containers = append(podSpec.Containers, BuildSpiffeHelperContainer())
+	// Only inject spiffe-helper if SPIRE is enabled
+	if spireEnabled {
+		if !containerExists(podSpec.Containers, SpiffeHelperContainerName) {
+			mutatorLog.Info("Injecting spiffe-helper (SPIRE enabled)")
+			podSpec.Containers = append(podSpec.Containers, BuildSpiffeHelperContainer())
+		}
+	} else {
+		mutatorLog.Info("Skipping spiffe-helper injection (SPIRE disabled)")
 	}
 
-	// Check and inject client-registration sidecar
+	// Check and inject client-registration sidecar (with SPIRE option)
 	if !containerExists(podSpec.Containers, ClientRegistrationContainerName) {
 		clientID := fmt.Sprintf("%s/%s", namespace, crName)
-		podSpec.Containers = append(podSpec.Containers, BuildClientRegistrationContainer(clientID, crName, namespace))
+		podSpec.Containers = append(podSpec.Containers, BuildClientRegistrationContainerWithSpireOption(clientID, crName, namespace, spireEnabled))
+	}
+
+	// Check and inject envoy-proxy sidecar
+	if !containerExists(podSpec.Containers, EnvoyProxyContainerName) {
+		podSpec.Containers = append(podSpec.Containers, BuildEnvoyProxyContainer())
+	}
+
+	return nil
+}
+
+func (m *PodMutator) InjectInitContainers(podSpec *corev1.PodSpec) error {
+	mutatorLog.Info("Injecting init containers", "existingInitContainers", len(podSpec.InitContainers))
+
+	if podSpec.InitContainers == nil {
+		podSpec.InitContainers = []corev1.Container{}
+	}
+
+	// Check and inject proxy-init init container
+	if !containerExists(podSpec.InitContainers, ProxyInitContainerName) {
+		mutatorLog.Info("Injecting proxy-init init container")
+		podSpec.InitContainers = append(podSpec.InitContainers, BuildProxyInitContainer())
 	}
 
 	return nil
 }
 
 func (m *PodMutator) InjectVolumes(podSpec *corev1.PodSpec) error {
-	mutatorLog.Info("Injecting volumes", "existingVolumes", len(podSpec.Volumes))
+	// Default to SPIRE enabled for backward compatibility
+	return m.InjectVolumesWithSpireOption(podSpec, true)
+}
+
+// InjectVolumesWithSpireOption injects volumes with optional SPIRE support
+func (m *PodMutator) InjectVolumesWithSpireOption(podSpec *corev1.PodSpec, spireEnabled bool) error {
+	mutatorLog.Info("Injecting volumes", "existingVolumes", len(podSpec.Volumes), "spireEnabled", spireEnabled)
 
 	if podSpec.Volumes == nil {
 		podSpec.Volumes = []corev1.Volume{}
 	}
 
 	// Add all required volumes if they don't exist
-	requiredVolumes := BuildRequiredVolumes()
+	var requiredVolumes []corev1.Volume
+	if spireEnabled {
+		requiredVolumes = BuildRequiredVolumes()
+	} else {
+		requiredVolumes = BuildRequiredVolumesNoSpire()
+	}
+
 	injectedCount := 0
 	for _, vol := range requiredVolumes {
 		if !volumeExists(podSpec.Volumes, vol.Name) {

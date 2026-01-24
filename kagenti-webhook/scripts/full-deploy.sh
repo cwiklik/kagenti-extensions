@@ -6,7 +6,13 @@ set -e
 CLUSTER=${CLUSTER:-kagenti}
 NAMESPACE=${NAMESPACE:-kagenti-webhook-system}
 TAG=$(date +%Y%m%d%H%M%S)
-IMAGE_NAME=local/kagenti-webhook:${TAG}
+IMAGE_NAME=localhost/kagenti-webhook:${TAG}
+
+# AuthBridge demo configuration
+AUTHBRIDGE_DEMO=${AUTHBRIDGE_DEMO:-false}
+AUTHBRIDGE_NAMESPACE=${AUTHBRIDGE_NAMESPACE:-team1}
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+AUTHBRIDGE_K8S_DIR="${SCRIPT_DIR}/../../AuthBridge/k8s"
 
 echo "=========================================="
 echo "Full Webhook Deployment"
@@ -14,6 +20,10 @@ echo "=========================================="
 echo "Cluster: ${CLUSTER}"
 echo "Namespace: ${NAMESPACE}"
 echo "Image: ${IMAGE_NAME}"
+echo "AuthBridge Demo: ${AUTHBRIDGE_DEMO}"
+if [ "${AUTHBRIDGE_DEMO}" = "true" ]; then
+    echo "AuthBridge Namespace: ${AUTHBRIDGE_NAMESPACE}"
+fi
 echo ""
 
 # Step 1: Build and load image
@@ -103,7 +113,7 @@ fi
 
 echo ""
 echo "=========================================="
-echo "Deployment Complete!"
+echo "Webhook Deployment Complete!"
 echo "=========================================="
 echo ""
 echo "Current pods:"
@@ -111,6 +121,42 @@ kubectl get -n ${NAMESPACE} pod -l control-plane=controller-manager
 echo ""
 echo "Webhook configurations:"
 kubectl get mutatingwebhookconfigurations | grep kagenti-webhook
+
+# Optional: Setup AuthBridge demo prerequisites (namespace + ConfigMaps only)
+if [ "${AUTHBRIDGE_DEMO}" = "true" ]; then
+    echo ""
+    echo "=========================================="
+    echo "Setting up AuthBridge Demo Prerequisites"
+    echo "=========================================="
+    
+    # Ensure namespace exists with required label
+    echo ""
+    echo "[AuthBridge 1/2] Creating namespace ${AUTHBRIDGE_NAMESPACE}..."
+    kubectl create namespace ${AUTHBRIDGE_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
+    kubectl label namespace ${AUTHBRIDGE_NAMESPACE} kagenti-enabled=true --overwrite
+    
+    # Apply ConfigMaps (update namespace in-place)
+    echo ""
+    echo "[AuthBridge 2/2] Applying ConfigMaps..."
+    if [ -f "${AUTHBRIDGE_K8S_DIR}/configmaps-webhook.yaml" ]; then
+        sed "s/namespace: team1/namespace: ${AUTHBRIDGE_NAMESPACE}/g" \
+            "${AUTHBRIDGE_K8S_DIR}/configmaps-webhook.yaml" | kubectl apply -f -
+    else
+        echo "Warning: ${AUTHBRIDGE_K8S_DIR}/configmaps-webhook.yaml not found"
+    fi
+    
+    echo ""
+    echo "=========================================="
+    echo "AuthBridge Prerequisites Ready!"
+    echo "=========================================="
+    echo ""
+    echo "See AuthBridge/demo-webhook.md for next steps"
+fi
+
 echo ""
-echo "To view logs:"
+echo "To view webhook logs:"
 echo "  kubectl logs -n ${NAMESPACE} -l control-plane=controller-manager -f"
+echo ""
+echo "Usage with AuthBridge demo:"
+echo "  AUTHBRIDGE_DEMO=true ./scripts/full-deploy.sh"
+echo "  AUTHBRIDGE_DEMO=true AUTHBRIDGE_NAMESPACE=myns ./scripts/full-deploy.sh"

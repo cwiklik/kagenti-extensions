@@ -1,0 +1,60 @@
+# Agent Deployment for AuthBridge Webhook Demo
+#
+# This deployment uses the kagenti-webhook to automatically inject:
+# - proxy-init (init container for iptables setup)
+# - spiffe-helper (SPIFFE credential fetcher) - only with kagenti.io/spire: enabled
+# - kagenti-client-registration (registers with Keycloak)
+# - envoy-proxy (intercepts traffic and performs token exchange)
+#
+# Labels:
+#   kagenti.io/inject: enabled  - Enables AuthBridge sidecar injection
+#   kagenti.io/spire: enabled   - Enables SPIRE-based identity (optional)
+#
+# Usage:
+#   kubectl apply -f agent-deployment-webhook.yaml
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: agent
+  namespace: team1
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent
+  namespace: team1
+  labels:
+    app: agent
+    kagenti.io/inject: enabled
+    kagenti.io/spire: enabled
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agent
+  template:
+    metadata:
+      labels:
+        app: agent
+    spec:
+      serviceAccountName: agent
+      containers:
+        - name: agent
+          image: nicolaka/netshoot:latest
+          imagePullPolicy: Always
+          command:
+            - sh
+            - -c
+            - |
+              echo "Waiting for client registration..."
+              while [ ! -f /shared/client-id.txt ]; do
+                sleep 2
+              done
+              echo "Ready! Client ID: $(cat /shared/client-id.txt)"
+              tail -f /dev/null
+          volumeMounts:
+            - name: shared-data
+              mountPath: /shared
