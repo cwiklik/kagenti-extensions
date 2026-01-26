@@ -267,7 +267,7 @@ kubectl logs deployment/agent -n team1 -c spiffe-helper
 ### Common Issues
 
 1. **"Client not enabled to retrieve service account"**
-   - Run Step 6 to enable service accounts for the dynamically registered client
+   - Run Step 4 to enable service accounts for the dynamically registered client
 
 2. **"Requested audience not available: auth-target"**
    - Ensure `TARGET_SCOPES` in `authbridge-config` includes `auth-target-aud`
