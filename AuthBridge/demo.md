@@ -356,7 +356,7 @@ curl -H "Authorization: Bearer $TOKEN" http://auth-target-service:8081/test
 
 #### 6b. User Token Flow (password grant) - Subject Preservation
 
-This flow demonstrates how the **user's identity (sub)** is preserved through token exchange. The `setup_keycloak.py` script creates a demo user: `alice` / `alice123`
+This flow demonstrates how the **user's identity (sub)** is preserved through token exchange. The `setup_keycloak.py` script creates a demo user: `alice` (password: `alice123`)
 
 ```bash
 # Get a user token for alice
