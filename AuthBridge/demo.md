@@ -207,12 +207,14 @@ sequenceDiagram
 | Step | Component | Action | Verification |
 |------|-----------|--------|--------------|
 | 1 | SPIRE → spiffe-helper | Issue SVID | Pod receives cryptographic identity (SPIFFE ID) |
-| 2 | client-registration → Keycloak | Register client | Keycloak client created with `client_id = SPIFFE ID` |
-| 3 | agent → Keycloak | Get token | Token issued with `aud: SPIFFE ID`, `scope: agent-spiffe-aud` |
-| 4 | agent → envoy-proxy | HTTP request | Envoy intercepts outbound traffic to auth-target |
-| 5 | ext-proc → Keycloak | Token Exchange | Token exchanged: `aud: SPIFFE ID` → `aud: auth-target` |
-| 6 | envoy-proxy → auth-target | Forward request | Request sent with exchanged token |
-| 7 | auth-target | Validate token | Token validated (`aud: auth-target`), returns `"authorized"` |
+| 2 | setup_keycloak.py | Configure realm | Creates `demo` realm, `auth-target` client, scopes, and demo user `alice` |
+| 3 | client-registration → Keycloak | Register client | Keycloak client created with `client_id = SPIFFE ID` |
+| 4 | agent → Keycloak | Get token | Token issued with `aud: SPIFFE ID`, `scope: agent-spiffe-aud` |
+| 5 | agent → envoy-proxy | HTTP request | Envoy intercepts outbound traffic to auth-target |
+| 6 | ext-proc → Keycloak | Token Exchange | Token exchanged: `aud: SPIFFE ID` → `aud: auth-target` |
+| 7 | envoy-proxy → auth-target | Forward request | Request sent with exchanged token |
+| 7b | Subject preservation | User token exchange | `sub` and `preferred_username` preserved through exchange |
+| 8 | auth-target | Validate token | Token validated (`aud: auth-target`), returns `"authorized"` |
 
 ### Key Security Properties
 
@@ -273,6 +275,7 @@ The `setup_keycloak` script creates:
 - `auth-target` client (token exchange target audience)
 - `agent-spiffe-aud` scope (realm default - adds Agent's SPIFFE ID to all tokens)
 - `auth-target-aud` scope (for exchanged tokens)
+- `alice` demo user (username: `alice`, password: `alice123`) for testing user token flows
 
 **Note:** No static `agent` client is created - the AuthProxy uses the dynamically
 registered client credentials from `/shared/` (populated by client-registration).
@@ -316,204 +319,192 @@ kubectl wait --for=condition=available --timeout=120s deployment/auth-target -n 
 
 ### Step 6: Test the Flow
 
+First, exec into the agent container:
+
 ```bash
-# Exec into the agent container
 kubectl exec -it deployment/agent -n authbridge -c agent -- sh
 ```
 
-Inside the container (or run as a single command):
+The following tests can be run inside the container. Credentials are auto-populated by client-registration:
 
 ```bash
-# Credentials are auto-populated by client-registration
 CLIENT_ID=$(cat /shared/client-id.txt)
 CLIENT_SECRET=$(cat /shared/client-secret.txt)
-
 echo "Client ID: $CLIENT_ID"
-echo "Client Secret: $CLIENT_SECRET"
+```
 
-# Get a token from Keycloak
+#### 6a. Service Account Flow (client_credentials grant)
+
+This flow uses the Agent's service account - the `sub` claim will be the service account ID:
+
+```bash
+# Get a service account token
 TOKEN=$(curl -sX POST http://keycloak-service.keycloak.svc:8080/realms/demo/protocol/openid-connect/token \
   -d 'grant_type=client_credentials' \
   -d "client_id=$CLIENT_ID" \
   -d "client_secret=$CLIENT_SECRET" | jq -r '.access_token')
 
-echo "Token obtained!"
+echo "=== SERVICE ACCOUNT TOKEN (Before Exchange) ==="
+echo $TOKEN | cut -d'.' -f2 | tr '_-' '/+' | { read p; echo "${p}=="; } | base64 -d | jq '{aud, azp, sub, preferred_username, scope}'
 
-# Verify token audience (should be Agent's SPIFFE ID via agent-spiffe-aud scope)
-echo $TOKEN | cut -d'.' -f2 | tr '_-' '/+' | { read p; echo "${p}=="; } | base64 -d | jq '{aud, azp, scope, iss}'
-
-# Call auth-target (AuthProxy will exchange token for "auth-target" audience)
+# Call auth-target (AuthProxy will exchange token)
+echo ""
+echo "Calling auth-target..."
 curl -H "Authorization: Bearer $TOKEN" http://auth-target-service:8081/test
-
-# Expected output: "authorized"
+# Expected: "authorized"
 ```
 
-**Or run the complete test as a single command:**
+#### 6b. User Token Flow (password grant) - Subject Preservation
+
+This flow demonstrates how the **user's identity (sub)** is preserved through token exchange. The `setup_keycloak.py` script creates a demo user: `alice` / `alice123`
 
 ```bash
+# Get a user token for alice
+USER_TOKEN=$(curl -sX POST http://keycloak-service.keycloak.svc:8080/realms/demo/protocol/openid-connect/token \
+  -d 'grant_type=password' \
+  -d "client_id=$CLIENT_ID" \
+  -d "client_secret=$CLIENT_SECRET" \
+  -d 'username=alice' \
+  -d 'password=alice123' | jq -r '.access_token')
+
+echo "=== USER TOKEN (Before Exchange) - User: alice ==="
+echo $USER_TOKEN | cut -d'.' -f2 | tr '_-' '/+' | { read p; echo "${p}=="; } | base64 -d | jq '{aud, azp, sub, preferred_username, scope}'
+
+# Call auth-target with alice's token
+echo ""
+echo "Calling auth-target with alice's token..."
+curl -H "Authorization: Bearer $USER_TOKEN" http://auth-target-service:8081/test
+# Expected: "authorized" - alice's identity is preserved!
+```
+
+**Key Difference:** Compare the `sub` and `preferred_username` claims:
+- Service account token: `sub` is a service account ID, `preferred_username` is like `service-account-spiffe://...`
+- User token: `sub` is alice's user ID, `preferred_username` is `alice`
+
+#### Quick Test Commands
+
+Run both tests as single commands:
+
+```bash
+# Service account test
 kubectl exec deployment/agent -n authbridge -c agent -- sh -c '
 CLIENT_ID=$(cat /shared/client-id.txt)
 CLIENT_SECRET=$(cat /shared/client-secret.txt)
 TOKEN=$(curl -s http://keycloak-service.keycloak.svc:8080/realms/demo/protocol/openid-connect/token \
   -d "grant_type=client_credentials" -d "client_id=$CLIENT_ID" -d "client_secret=$CLIENT_SECRET" | jq -r ".access_token")
-echo "Token audience: $(echo $TOKEN | cut -d. -f2 | tr '_-' '/+' | { read p; echo "${p}=="; } | base64 -d | jq -r .aud)"
+echo "=== SERVICE ACCOUNT ==="
+echo "sub: $(echo $TOKEN | cut -d. -f2 | tr "_-" "/+" | { read p; echo "${p}=="; } | base64 -d | jq -r .sub)"
+echo "preferred_username: $(echo $TOKEN | cut -d. -f2 | tr "_-" "/+" | { read p; echo "${p}=="; } | base64 -d | jq -r .preferred_username)"
 echo "Result: $(curl -s -H "Authorization: Bearer $TOKEN" http://auth-target-service:8081/test)"
+'
+
+# User token test (alice)
+kubectl exec deployment/agent -n authbridge -c agent -- sh -c '
+CLIENT_ID=$(cat /shared/client-id.txt)
+CLIENT_SECRET=$(cat /shared/client-secret.txt)
+USER_TOKEN=$(curl -s http://keycloak-service.keycloak.svc:8080/realms/demo/protocol/openid-connect/token \
+  -d "grant_type=password" -d "client_id=$CLIENT_ID" -d "client_secret=$CLIENT_SECRET" \
+  -d "username=alice" -d "password=alice123" | jq -r ".access_token")
+echo "=== USER: alice ==="
+echo "sub: $(echo $USER_TOKEN | cut -d. -f2 | tr "_-" "/+" | { read p; echo "${p}=="; } | base64 -d | jq -r .sub)"
+echo "preferred_username: $(echo $USER_TOKEN | cut -d. -f2 | tr "_-" "/+" | { read p; echo "${p}=="; } | base64 -d | jq -r .preferred_username)"
+echo "Result: $(curl -s -H "Authorization: Bearer $USER_TOKEN" http://auth-target-service:8081/test)"
 '
 ```
 
 ### Step 7: Inspect Token Claims (Before and After Exchange)
 
-This step shows how the token claims change during the exchange process.
+This step shows how the token claims change during exchange for **both** service account and user tokens.
 
-#### View Original Token Claims (Before Exchange)
-
-From inside the agent container, inspect the token obtained from Keycloak:
+#### 7a. Service Account Token - Before and After
 
 ```bash
-# Get the token
-CLIENT_ID=$(cat /shared/client-id.txt)
-CLIENT_SECRET=$(cat /shared/client-secret.txt)
-TOKEN=$(curl -sX POST http://keycloak-service.keycloak.svc:8080/realms/demo/protocol/openid-connect/token \
-  -d 'grant_type=client_credentials' \
-  -d "client_id=$CLIENT_ID" \
-  -d "client_secret=$CLIENT_SECRET" | jq -r '.access_token')
-
-# Decode and display important claims
-echo "=== ORIGINAL TOKEN (Before Exchange) ==="
-echo $TOKEN | cut -d'.' -f2 | tr '_-' '/+' | { read p; echo "${p}=="; } | base64 -d  | jq '{
-  aud: .aud,
-  azp: .azp,
-  scope: .scope,
-  iss: .iss,
-  sub: .sub,
-  exp: .exp,
-  iat: .iat
-}'
-```
-
-**Expected output:**
-```json
-{
-  "aud": "spiffe://localtest.me/ns/authbridge/sa/agent",
-  "azp": "spiffe://localtest.me/ns/authbridge/sa/agent",
-  "scope": "agent-spiffe-aud profile email",
-  "iss": "http://keycloak.localtest.me:8080/realms/demo",
-  "sub": "3fe8b589-aefa-4377-b735-3c5110ec3ec2",
-  "exp": 1767756190,
-  "iat": 1767755890
-}
-```
-
-Key observations:
-- `aud: spiffe://...` - The Agent's SPIFFE ID as audience, authorizes the AuthProxy to exchange this token
-- `azp` - The SPIFFE ID of the caller (same as audience since Agent is calling for itself)
-- `scope: agent-spiffe-aud` - The realm default scope that adds the Agent's SPIFFE ID to audience
-- **Security model** - The SPIFFE ID in the audience matches the credentials in `/shared/`
-
-#### View Exchanged Token Claims (After Exchange)
-
-To see the token after exchange, check the auth-target logs which display the received token:
-
-```bash
-kubectl logs deployment/auth-target -n authbridge | grep -A 20 "JWT Debug"
-```
-
-**Expected output:**
-```shell
-[JWT Debug] Successfully validated token
-[JWT Debug] Audience: [auth-target]
-[JWT Debug] Subject: ...
-```
-
-#### Complete Token Comparison Script
-
-Run this to see both tokens (before and after exchange):
-
-```bash
-# Step 1: Get original token and call auth-target
 kubectl exec deployment/agent -n authbridge -c agent -- sh -c '
 CLIENT_ID=$(cat /shared/client-id.txt)
 CLIENT_SECRET=$(cat /shared/client-secret.txt)
 
-# Get original token
 TOKEN=$(curl -s http://keycloak-service.keycloak.svc:8080/realms/demo/protocol/openid-connect/token \
   -d "grant_type=client_credentials" \
   -d "client_id=$CLIENT_ID" \
   -d "client_secret=$CLIENT_SECRET" | jq -r ".access_token")
 
-echo "╔══════════════════════════════════════════════════════════════╗"
-echo "║           ORIGINAL TOKEN (Before Exchange)                   ║"
-echo "╚══════════════════════════════════════════════════════════════╝"
-echo $TOKEN | cut -d"." -f2 | tr "_-" "/+" | { read p; echo "${p}=="; } | base64 -d | jq "{aud, azp, scope, iss}"
+echo "=== SERVICE ACCOUNT TOKEN (Before Exchange) ==="
+echo $TOKEN | cut -d"." -f2 | tr "_-" "/+" | { read p; echo "${p}=="; } | base64 -d | jq "{aud, azp, sub, preferred_username, scope}"
 
 echo ""
-echo "Calling auth-target... (token exchange happens in AuthProxy)"
-RESULT=$(curl -s -H "Authorization: Bearer $TOKEN" http://auth-target-service:8081/test)
-echo "Result: $RESULT"
+echo "Calling auth-target... (token exchange happens)"
+curl -s -H "Authorization: Bearer $TOKEN" http://auth-target-service:8081/test
+echo ""
 '
 ```
 
+Then check auth-target logs for the **exchanged** token:
+
 ```bash
-# Step 2: Extract and decode the EXCHANGED token from envoy-proxy logs
+echo "=== SERVICE ACCOUNT TOKEN (After Exchange) ===" && \
+kubectl logs deployment/auth-target -n authbridge --tail=20 | grep -E "(Subject|Audience|Authorized Party|Preferred)" || echo "Check logs manually"
+```
+
+#### 7b. User Token (alice) - Before and After
+
+```bash
+kubectl exec deployment/agent -n authbridge -c agent -- sh -c '
+CLIENT_ID=$(cat /shared/client-id.txt)
+CLIENT_SECRET=$(cat /shared/client-secret.txt)
+
+USER_TOKEN=$(curl -s http://keycloak-service.keycloak.svc:8080/realms/demo/protocol/openid-connect/token \
+  -d "grant_type=password" \
+  -d "client_id=$CLIENT_ID" \
+  -d "client_secret=$CLIENT_SECRET" \
+  -d "username=alice" \
+  -d "password=alice123" | jq -r ".access_token")
+
+echo "=== USER TOKEN - alice (Before Exchange) ==="
+echo $USER_TOKEN | cut -d"." -f2 | tr "_-" "/+" | { read p; echo "${p}=="; } | base64 -d | jq "{aud, azp, sub, preferred_username, scope}"
+
 echo ""
-echo "╔══════════════════════════════════════════════════════════════╗"
-echo "║           EXCHANGED TOKEN (After Exchange)                   ║"
-echo "╚══════════════════════════════════════════════════════════════╝"
-# Get the exchanged token from the logs (look for "Successfully exchanged token")
-EXCHANGED_TOKEN=$(kubectl logs deployment/agent -n authbridge -c envoy-proxy 2>&1 | \
-  grep -o "Bearer eyJ[^']*" | tail -1 | sed 's/Bearer //')
-if [ -n "$EXCHANGED_TOKEN" ]; then
-  echo $EXCHANGED_TOKEN | cut -d'.' -f2 | tr '_-' '/+' | { read p; echo "${p}=="; } | base64 -d | jq '{aud, azp, scope, iss}'
-else
-  echo "Note: Exchanged token not found in logs. Check envoy-proxy logs manually."
-fi
+echo "Calling auth-target with alice token... (token exchange happens)"
+curl -s -H "Authorization: Bearer $USER_TOKEN" http://auth-target-service:8081/test
+echo ""
+'
 ```
 
-**Expected output:**
+Then check auth-target logs for the **exchanged** token (note `sub` and `preferred_username` are preserved!):
 
-```
-╔══════════════════════════════════════════════════════════════╗
-║           ORIGINAL TOKEN (Before Exchange)                   ║
-╚══════════════════════════════════════════════════════════════╝
-{
-  "aud": "spiffe://localtest.me/ns/authbridge/sa/agent",
-  "azp": "spiffe://localtest.me/ns/authbridge/sa/agent",
-  "scope": "agent-spiffe-aud profile email",
-  "iss": "http://keycloak.localtest.me:8080/realms/demo"
-}
-
-Calling auth-target... (token exchange happens in AuthProxy)
-Result: authorized
-
-╔══════════════════════════════════════════════════════════════╗
-║           EXCHANGED TOKEN (After Exchange)                   ║
-╚══════════════════════════════════════════════════════════════╝
-{
-  "aud": "auth-target",
-  "azp": "spiffe://localtest.me/ns/authbridge/sa/agent",
-  "scope": "openid auth-target-aud",
-  "iss": "http://keycloak.localtest.me:8080/realms/demo"
-}
+```bash
+echo "=== USER TOKEN - alice (After Exchange) ===" && \
+kubectl logs deployment/auth-target -n authbridge --tail=10 | grep -E "(Subject|Audience|Authorized Party|Preferred)" || echo "Check logs manually"
 ```
 
-#### Token Claims Summary
+#### Token Claims Comparison
 
-| Claim | Before Exchange | After Exchange |
-|-------|-----------------|----------------|
-| `aud` | Agent's SPIFFE ID | `auth-target` |
-| `azp` | SPIFFE ID (caller) | Agent's SPIFFE ID |
-| `scope` | `agent-spiffe-aud profile email` | `auth-target-aud` |
-| `iss` | Keycloak realm | Keycloak realm (same) |
+| Claim | Service Account (Before) | Service Account (After) | User Token (Before) | User Token (After) |
+|-------|--------------------------|-------------------------|---------------------|-------------------|
+| `aud` | Agent's SPIFFE ID | `auth-target` | Agent's SPIFFE ID | `auth-target` |
+| `azp` | Agent's SPIFFE ID | Agent's SPIFFE ID | Agent's SPIFFE ID | Agent's SPIFFE ID |
+| `sub` | Service account ID | Service account ID | **alice's user ID** | **alice's user ID** |
+| `preferred_username` | `service-account-spiffe://...` | same | **`alice`** | **`alice`** |
+| `scope` | `agent-spiffe-aud profile email` | `auth-target-aud` | `agent-spiffe-aud profile email` | `auth-target-aud` |
 
-The key changes during token exchange:
-- **`aud`** transforms from Agent's SPIFFE ID to `auth-target`, allowing the target service to validate the token
-- **`azp`** changes to the Agent's SPIFFE ID, indicating the proxy (using its own credentials) performed the exchange
+**Key Insight: Subject Preservation**
+- The `sub` claim (user identity) is **preserved** through token exchange!
+- For service accounts: `sub` remains the service account ID
+- For users: `sub` remains alice's user ID - enabling user attribution at the target service
+- The `azp` claim shows which client (Agent's SPIFFE ID) performed the exchange
 
-**Security Model Benefits:**
+#### Why Subject Preservation Matters
+
+1. **User Attribution:** The target service knows the request is from alice, not just "some agent"
+2. **Audit Trail:** `sub=alice`, `azp=agent-spiffe-id` shows the full delegation chain
+3. **Authorization Decisions:** Target can apply user-specific policies (alice's permissions)
+4. **Compliance:** User actions are traceable even through agent intermediaries
+
+#### Security Model Benefits
+
 - The `agent-spiffe-aud` scope adds the Agent's SPIFFE ID to all tokens' audience
 - The AuthProxy uses the same credentials as the registered client (matching the token's audience)
 - No static secrets - credentials are dynamically generated by client-registration
-- Clear audit trail - you can see which client (SPIFFE ID) exchanged the token via the `azp` claim
+- Clear audit trail via the `azp` claim
 - Token exchange logic is handled by the sidecar, transparent to the application code
 
 ## Verification
