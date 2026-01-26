@@ -356,7 +356,28 @@ func BuildEnvoyProxyContainer() corev1.Container {
 }
 
 // BuildProxyInitContainer creates the init container that sets up iptables
-// to redirect outbound traffic to the Envoy proxy
+// to redirect outbound traffic to the Envoy proxy.
+//
+// SECURITY NOTE: This init container requires elevated privileges:
+//   - RunAsUser: 0 (root) - Required to modify network namespace iptables rules
+//   - RunAsNonRoot: false - Explicitly allows root execution
+//   - NET_ADMIN capability - Required to configure iptables rules for traffic redirection
+//   - NET_RAW capability - Required to create raw sockets for network operations
+//
+// These privileges are necessary because iptables manipulation is a kernel-level
+// operation that requires root access. This is a common pattern used by service
+// meshes (Istio, Linkerd) for transparent traffic interception.
+//
+// Risk mitigations:
+//   - This runs as an init container (not a long-running sidecar), limiting exposure window
+//   - The container exits immediately after configuring iptables rules
+//   - Minimal resource limits are applied (10m CPU, 10Mi memory)
+//   - The container image should be regularly updated and scanned for vulnerabilities
+//   - Consider using a distroless or minimal base image for the proxy-init container
+//
+// Alternative approaches (not currently implemented):
+//   - CNI plugin: Configure iptables at pod network setup time (requires cluster-level changes)
+//   - Istio CNI: Similar approach used by Istio to avoid privileged init containers
 func BuildProxyInitContainer() corev1.Container {
 	builderLog.Info("building ProxyInit Container")
 
