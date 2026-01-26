@@ -198,7 +198,14 @@ echo "SPIFFE credentials ready!"
 
 # Extract client ID (SPIFFE ID) from JWT and save to file
 JWT_PAYLOAD=$(cat /opt/jwt_svid.token | cut -d'.' -f2)
-CLIENT_ID=$(echo "${JWT_PAYLOAD}==" | base64 -d 2>/dev/null | python -c "import sys,json; print(json.load(sys.stdin).get('sub',''))")
+if ! CLIENT_ID=$(echo "${JWT_PAYLOAD}==" | base64 -d | python -c "import sys,json; print(json.load(sys.stdin).get('sub',''))"); then
+  echo "Error: Failed to decode JWT payload or extract client ID" >&2
+  exit 1
+fi
+if [ -z "$CLIENT_ID" ]; then
+  echo "Error: Extracted client ID is empty" >&2
+  exit 1
+fi
 echo "$CLIENT_ID" > /shared/client-id.txt
 echo "Client ID (SPIFFE ID): $CLIENT_ID"
 
