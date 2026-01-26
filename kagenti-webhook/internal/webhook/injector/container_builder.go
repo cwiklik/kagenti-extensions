@@ -398,11 +398,11 @@ func BuildProxyInitContainer() corev1.Container {
 		Env: []corev1.EnvVar{
 			{
 				Name:  "PROXY_PORT",
-				Value: "15123",
+				Value: fmt.Sprintf("%d", EnvoyProxyPort),
 			},
 			{
 				Name:  "PROXY_UID",
-				Value: "1337",
+				Value: fmt.Sprintf("%d", EnvoyProxyUID),
 			},
 			{
 				Name:  "OUTBOUND_PORTS_EXCLUDE",
