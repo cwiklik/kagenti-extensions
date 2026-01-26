@@ -15,7 +15,7 @@ metadata:
   namespace: team1
 data:
   SPIRE_ENABLED: "true"
-  KEYCLOAK_URL: "http://keycloak-service.keycloak:8080"
+  KEYCLOAK_URL: "http://keycloak-service.keycloak.svc:8080"
   KEYCLOAK_REALM: "demo"
   # Demo/development only: do NOT use hardcoded admin credentials in production.
   # For production deployments, supply these via a Kubernetes Secret and reference

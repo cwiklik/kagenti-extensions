@@ -2,17 +2,37 @@
 
 set -e
 
+# Validate Kubernetes namespace/name format (DNS-1123 label)
+# Must be lowercase alphanumeric or '-', start with alphanumeric, max 63 chars
+validate_k8s_name() {
+    local name="$1"
+    local label="$2"
+    if [[ ! "$name" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]]; then
+        echo "Error: Invalid ${label}: '${name}'" >&2
+        echo "Must be a valid DNS-1123 label: lowercase alphanumeric or '-'," >&2
+        echo "must start and end with alphanumeric, max 63 characters." >&2
+        exit 1
+    fi
+}
+
 # Configuration
 CLUSTER=${CLUSTER:-kagenti}
 NAMESPACE=${NAMESPACE:-kagenti-webhook-system}
 TAG=$(date +%Y%m%d%H%M%S)
-IMAGE_NAME=localhost/kagenti-webhook:${TAG}
+IMAGE_NAME="localhost/kagenti-webhook:${TAG}"
 
 # AuthBridge demo configuration
 AUTHBRIDGE_DEMO=${AUTHBRIDGE_DEMO:-false}
 AUTHBRIDGE_NAMESPACE=${AUTHBRIDGE_NAMESPACE:-team1}
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AUTHBRIDGE_K8S_DIR="${SCRIPT_DIR}/../../AuthBridge/k8s"
+
+# Validate all user-controllable inputs
+validate_k8s_name "$CLUSTER" "cluster name"
+validate_k8s_name "$NAMESPACE" "namespace"
+if [ "${AUTHBRIDGE_DEMO}" = "true" ]; then
+    validate_k8s_name "$AUTHBRIDGE_NAMESPACE" "AuthBridge namespace"
+fi
 
 if [ ! -d "${AUTHBRIDGE_K8S_DIR}" ]; then
     echo "Error: AuthBridge k8s directory not found at '${AUTHBRIDGE_K8S_DIR}'." >&2
@@ -33,20 +53,20 @@ echo ""
 
 # Step 1: Build and load image
 echo "[1/4] Building Docker image..."
-docker build -f Dockerfile . --tag ${IMAGE_NAME} --load
+docker build -f Dockerfile . --tag "${IMAGE_NAME}" --load
 
 echo ""
 echo "[2/4] Loading image into kind cluster..."
-kind load docker-image --name ${CLUSTER} ${IMAGE_NAME}
+kind load docker-image --name "${CLUSTER}" "${IMAGE_NAME}"
 
 # Step 2: Update deployment
 echo ""
 echo "[3/4] Updating deployment..."
-kubectl -n ${NAMESPACE} set image deployment/kagenti-webhook-controller-manager manager=${IMAGE_NAME}
+kubectl -n "${NAMESPACE}" set image deployment/kagenti-webhook-controller-manager "manager=${IMAGE_NAME}"
 
 echo ""
 echo "Waiting for rollout to complete..."
-kubectl rollout status -n ${NAMESPACE} deployment/kagenti-webhook-controller-manager --timeout=120s
+kubectl rollout status -n "${NAMESPACE}" deployment/kagenti-webhook-controller-manager --timeout=120s
 
 # Step 3: Deploy authbridge webhook if it doesn't exist
 echo ""
@@ -122,10 +142,10 @@ echo "Webhook Deployment Complete!"
 echo "=========================================="
 echo ""
 echo "Current pods:"
-kubectl get -n ${NAMESPACE} pod -l control-plane=controller-manager
+kubectl get -n "${NAMESPACE}" pod -l control-plane=controller-manager
 echo ""
 echo "Webhook configurations:"
-kubectl get mutatingwebhookconfigurations | grep kagenti-webhook
+kubectl get mutatingwebhookconfigurations | grep kagenti-webhook || true
 
 # Optional: Setup AuthBridge demo prerequisites (namespace + ConfigMaps only)
 if [ "${AUTHBRIDGE_DEMO}" = "true" ]; then
@@ -137,10 +157,12 @@ if [ "${AUTHBRIDGE_DEMO}" = "true" ]; then
     # Ensure namespace exists with required label
     echo ""
     echo "[AuthBridge 1/2] Creating namespace ${AUTHBRIDGE_NAMESPACE}..."
-    kubectl create namespace ${AUTHBRIDGE_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
-    kubectl label namespace ${AUTHBRIDGE_NAMESPACE} kagenti-enabled=true --overwrite
+    kubectl create namespace "${AUTHBRIDGE_NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
+    kubectl label namespace "${AUTHBRIDGE_NAMESPACE}" kagenti-enabled=true --overwrite
     
     # Apply ConfigMaps (update namespace in-place)
+    # Note: AUTHBRIDGE_NAMESPACE is validated above to be a safe DNS-1123 label,
+    # so it cannot contain sed metacharacters like '/' or '&'
     echo ""
     echo "[AuthBridge 2/2] Applying ConfigMaps..."
     if [ -f "${AUTHBRIDGE_K8S_DIR}/configmaps-webhook.yaml" ]; then
@@ -165,3 +187,4 @@ echo ""
 echo "Usage with AuthBridge demo:"
 echo "  AUTHBRIDGE_DEMO=true ./scripts/full-deploy.sh"
 echo "  AUTHBRIDGE_DEMO=true AUTHBRIDGE_NAMESPACE=myns ./scripts/full-deploy.sh"
+echo ""

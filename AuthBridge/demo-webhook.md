@@ -99,12 +99,16 @@ source venv/bin/activate
 
 # Run setup for webhook deployment (default: team1 namespace, agent service account)
 python setup_keycloak-webhook.py
+```
 
-# Or specify custom namespace/service account
+Or specify custom namespace/service account:
+
+```bash
 python setup_keycloak-webhook.py --namespace myapp --service-account mysa
 ```
 
 This creates:
+
 - `auth-target` client (target audience for token exchange)
 - `agent-<namespace>-<sa>-aud` scope (adds agent's SPIFFE ID to token audience)
 - `auth-target-aud` scope (adds "auth-target" to exchanged tokens)
@@ -127,6 +131,7 @@ kubectl apply -f k8s/configmaps-webhook.yaml
 ```
 
 The ConfigMaps include:
+
 - `environments` - Keycloak connection settings for client-registration
 - `authbridge-config` - Token exchange configuration for envoy-proxy
 - `spiffe-helper-config` - SPIFFE helper configuration (for SPIRE mode)
@@ -143,11 +148,8 @@ kubectl apply -f k8s/auth-target-deployment-webhook.yaml
 
 # Deploy agent (webhook will inject sidecars)
 kubectl apply -f k8s/agent-deployment-webhook.yaml
-```
 
-Wait for the pods to be ready:
-
-```bash
+# Wait for the pods to be ready:
 kubectl wait --for=condition=available --timeout=180s deployment/auth-target -n team1
 kubectl wait --for=condition=available --timeout=180s deployment/agent -n team1
 ```

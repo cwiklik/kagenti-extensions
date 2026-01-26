@@ -95,9 +95,8 @@ func BuildClientRegistrationContainer(clientID, name, namespace string) corev1.C
 func BuildClientRegistrationContainerWithSpireOption(clientID, name, namespace string, spireEnabled bool) corev1.Container {
 	builderLog.Info("building ClientRegistration Container", "spireEnabled", spireEnabled)
 
-	clientId := clientID
-	if clientId == "" {
-		clientId = namespace + "/" + name
+	if clientID =="" {
+		clientID = namespace + "/" + name
 	}
 
 	// Base environment variables
@@ -153,7 +152,7 @@ func BuildClientRegistrationContainerWithSpireOption(clientID, name, namespace s
 		},
 		{
 			Name:  "CLIENT_NAME",
-			Value: clientId,
+			Value: clientID,
 		},
 		{
 			Name:  "SECRET_FILE_PATH",
