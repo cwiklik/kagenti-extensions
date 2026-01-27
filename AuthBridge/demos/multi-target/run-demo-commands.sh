@@ -45,4 +45,6 @@ echo ""
 
 
 ## Step 3. Check AuthBridge Logs
-kubectl logs deployment/agent -n authbridge -c envoy-proxy | grep -i "matched\|routes"
+echo ""
+echo "=== AuthBridge Token Exchange Logs ==="
+kubectl logs deployment/agent -n authbridge -c envoy-proxy | grep -i "matched\|routes" || echo "(no matching log entries found)"
