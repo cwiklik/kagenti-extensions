@@ -1,4 +1,4 @@
-.PHONY: dev clean build build-images run-proxy run-target test docker-build-proxy docker-build-target docker-build-init docker-build-python deploy load-images undeploy kind-create kind-delete
+.PHONY: dev clean build build-images run-proxy run-target test unit-test docker-build-proxy docker-build-target docker-build-init docker-build-python deploy load-images undeploy kind-create kind-delete
 
 KIND_CLUSTER_NAME ?= kagenti # default to kagenti cluster name
 
@@ -50,7 +50,11 @@ kind-create:
 kind-delete:
 	kind delete cluster --name $(KIND_CLUSTER_NAME)
 
-# Test the application
+# Run Go unit tests
+unit-test:
+	go test ./go-processor/... -v
+
+# Integration test via curl
 test:
 	@echo "Testing valid authorization..."
 	@curl -s -H "Authorization: kagenti" http://localhost:8080/test
