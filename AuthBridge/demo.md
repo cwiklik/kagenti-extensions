@@ -345,7 +345,7 @@ TOKEN=$(curl -sX POST http://keycloak-service.keycloak.svc:8080/realms/demo/prot
   -d "client_secret=$CLIENT_SECRET" | jq -r '.access_token')
 
 echo "=== SERVICE ACCOUNT TOKEN (Before Exchange) ==="
-echo $TOKEN | cut -d'.' -f2 | tr '_-' '/+' | { read p; echo "${p}=="; } | base64 -d | jq '{aud, azp, iss,sub, preferred_username, scope}'
+echo $TOKEN | cut -d'.' -f2 | tr '_-' '/+' | { read p; echo "${p}=="; } | base64 -d | jq '{aud, azp, iss, sub, preferred_username, scope}'
 
 # Call auth-target (AuthProxy will exchange token)
 echo ""
