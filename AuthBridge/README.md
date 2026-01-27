@@ -2,7 +2,7 @@
 
 AuthBridge provides **secure, transparent token management** for Kubernetes workloads. It combines automatic [client registration](./client-registration/) with [token exchange](./AuthProxy/) capabilities, enabling zero-trust authentication flows with [SPIFFE/SPIRE](https://spiffe.io) integration.
 
-> **📘 Looking to run the demo?** See the [Demo Guide](./demo.md) for step-by-step instructions.
+> **📘 Looking to run the demo?** See the [Single-Target Demo](./demos/single-target/demo.md) or [Multi-Target Demo](./demos/multi-target/demo.md) for step-by-step instructions.
 
 ## What AuthBridge Does
 
@@ -265,7 +265,7 @@ sequenceDiagram
 - **Self-Audience Scoping** - Tokens include the Workload's own identity as audience, enabling token exchange
 - **Same Identity for Exchange** - AuthProxy uses the Workload's credentials (same SPIFFE ID), matching the token's audience
 - **Transparent to Application** - Token exchange is handled by the sidecar; applications don't need to implement it
-- **Configurable Target** - Target audience and scopes are configured via Kubernetes Secret
+- **Configurable Targets** - Route-based configuration maps destination hosts to target audiences
 
 ## Prerequisites
 
@@ -280,14 +280,37 @@ The easiest way to get all prerequisites is to use the [Kagenti Ansible installe
 
 ## Getting Started
 
-See the **[Demo Guide](./demo.md)** for complete step-by-step instructions on:
+### Demos
 
-- Building and loading images
-- Configuring Keycloak
-- Deploying the demo
-- Testing the token exchange flow
-- Inspecting token claims
-- Troubleshooting common issues
+- **[Single-Target Demo](./demos/single-target/demo.md)** - Basic token exchange to one target service
+- **[Multi-Target Demo](./demos/multi-target/demo.md)** - Route-based token exchange to multiple targets
+
+Both demos cover building images, configuring Keycloak, deploying, and testing.
+
+### Route-Based Configuration
+
+AuthBridge supports per-host token exchange configuration via `routes.yaml`:
+
+```yaml
+# Exchange tokens for target-alpha audience when calling this host
+- host: "target-alpha-service.authbridge.svc.cluster.local"
+  target_audience: "target-alpha"
+  token_scopes: "openid target-alpha-aud"
+
+# Glob patterns supported
+- host: "*.internal.svc.cluster.local"
+  passthrough: true  # Skip token exchange
+```
+
+### Keycloak Sync
+
+Use `keycloak_sync.py` to reconcile routes.yaml with Keycloak configuration:
+
+```bash
+python keycloak_sync.py --config routes.yaml --agent-client "spiffe://..." --yes
+```
+
+This creates target clients, audience scopes, and assigns scopes to the agent.
 
 ## Component Documentation
 
