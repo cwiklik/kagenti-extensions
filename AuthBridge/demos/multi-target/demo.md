@@ -102,24 +102,22 @@ This builds:
 
 ### 3. Deploy the Demo
 
-Deploy the routes ConfigMap and target services:
+Deploy everything (agent, targets, routes):
 
 ```bash
-kubectl apply -f demos/multi-target/k8s/
-```
+# With SPIFFE (requires SPIRE)
+kubectl apply -f demos/multi-target/k8s/authbridge-deployment.yaml
+kubectl apply -f demos/multi-target/k8s/targets.yaml
 
-Deploy the agent with AuthProxy sidecar:
-
-```bash
-kubectl apply -f demos/k8s/authbridge-deployment.yaml
-# OR without SPIFFE:
-kubectl apply -f demos/k8s/authbridge-deployment-no-spiffe.yaml
+# OR without SPIFFE
+kubectl apply -f demos/multi-target/k8s/authbridge-deployment-no-spiffe.yaml
+kubectl apply -f demos/multi-target/k8s/targets.yaml
 ```
 
 This deploys:
+- Agent pod with AuthProxy sidecar
 - Routes ConfigMap with multi-target configuration
 - Three target service pods (alpha, beta, gamma)
-- Agent pod with AuthProxy sidecar
 
 ### 4. Wait for Pods
 
@@ -233,7 +231,7 @@ The `routes.yaml` file maps hosts to token exchange parameters:
 ## Cleanup
 
 ```bash
-kubectl delete -f demos/k8s/authbridge-deployment.yaml
+kubectl delete -f demos/multi-target/k8s/authbridge-deployment.yaml
 kubectl delete -f demos/multi-target/k8s/
 ```
 

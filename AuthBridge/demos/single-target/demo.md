@@ -308,13 +308,13 @@ kubectl get secret ghcr-secret -n team1 -o yaml | sed 's/namespace: team1/namesp
 cd AuthBridge
 
 # With SPIFFE (requires SPIRE)
-kubectl apply -f demos/k8s/authbridge-deployment.yaml
+kubectl apply -f demos/single-target/k8s/authbridge-deployment.yaml
 ```
 
 OR without SPIFFE:
 
 ```bash
-kubectl apply -f demos/k8s/authbridge-deployment-no-spiffe.yaml
+kubectl apply -f demos/single-target/k8s/authbridge-deployment-no-spiffe.yaml
 ```
 
 This creates:
@@ -708,9 +708,9 @@ kubectl logs deployment/auth-target -n authbridge
 ## Cleanup
 
 ```bash
-kubectl delete -f demos/k8s/authbridge-deployment.yaml
+kubectl delete -f demos/single-target/k8s/authbridge-deployment.yaml
 # OR
-kubectl delete -f demos/k8s/authbridge-deployment-no-spiffe.yaml
+kubectl delete -f demos/single-target/k8s/authbridge-deployment-no-spiffe.yaml
 
 # Delete the namespace (removes everything)
 kubectl delete namespace authbridge

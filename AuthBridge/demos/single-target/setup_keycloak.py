@@ -283,9 +283,9 @@ def main():
     
     print("\n1. Deploy the AuthBridge demo:")
     print("\n   # With SPIFFE (requires SPIRE)")
-    print("   kubectl apply -f demos/k8s/authbridge-deployment.yaml")
+    print("   kubectl apply -f demos/single-target/k8s/authbridge-deployment.yaml")
     print("\n   # OR without SPIFFE")
-    print("   kubectl apply -f demos/k8s/authbridge-deployment-no-spiffe.yaml\n")
+    print("   kubectl apply -f demos/single-target/k8s/authbridge-deployment-no-spiffe.yaml\n")
     
     print("2. Wait for pods to be ready:")
     print("\n   kubectl wait --for=condition=available --timeout=120s deployment/agent -n authbridge")
