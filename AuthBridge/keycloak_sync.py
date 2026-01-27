@@ -340,6 +340,15 @@ class KeycloakReconciler:
             return False
 
 
+def _prompt_user(message: str) -> bool:
+    """Prompt user for confirmation. Returns True if yes."""
+    try:
+        response = input(f"{message} [y/N]: ").strip().lower()
+        return response in ("y", "yes")
+    except EOFError:
+        return False
+
+
 def load_routes(path: str) -> list[RouteTarget]:
     """Load routes from YAML file and convert to RouteTarget objects."""
     with open(path) as f:
@@ -444,8 +453,50 @@ def main():
 
     print(f"Found {len(targets)} targets to reconcile")
 
-    # Connect to Keycloak
+    # Connect to Keycloak master realm first to check if target realm exists
     print(f"Connecting to Keycloak at {args.keycloak_url}...")
+    try:
+        master_kc = KeycloakAdmin(
+            server_url=args.keycloak_url,
+            username=args.admin_user,
+            password=args.admin_password,
+            realm_name="master",
+            user_realm_name="master",
+        )
+    except Exception as e:
+        print(f"Error connecting to Keycloak: {e}")
+        sys.exit(1)
+
+    # Check if realm exists, prompt to create if not
+    realm_exists = False
+    try:
+        realms = master_kc.get_realms()
+        realm_exists = any(r.get("realm") == args.realm for r in realms)
+    except Exception as e:
+        print(f"Error checking realms: {e}")
+        sys.exit(1)
+
+    if not realm_exists:
+        print(f"[MISSING] Realm '{args.realm}' not found")
+        if args.yes or _prompt_user(f"  Create realm '{args.realm}'?"):
+            if args.dry_run:
+                print(f"  --> [DRY RUN] Would create realm '{args.realm}'")
+            else:
+                try:
+                    master_kc.create_realm({
+                        "realm": args.realm,
+                        "enabled": True,
+                        "displayName": args.realm,
+                    })
+                    print(f"  --> Created realm '{args.realm}'")
+                except Exception as e:
+                    print(f"  --> Error creating realm: {e}")
+                    sys.exit(1)
+        else:
+            print("  --> Skipped (realm required)")
+            sys.exit(1)
+
+    # Connect to target realm
     try:
         kc = KeycloakAdmin(
             server_url=args.keycloak_url,
@@ -455,7 +506,7 @@ def main():
             user_realm_name="master",
         )
     except Exception as e:
-        print(f"Error connecting to Keycloak: {e}")
+        print(f"Error connecting to realm '{args.realm}': {e}")
         sys.exit(1)
 
     # Reconcile
