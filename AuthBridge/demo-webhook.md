@@ -63,13 +63,13 @@ Deploy the webhook and its prerequisites with a single command:
 cd kagenti-webhook
 
 # Deploy webhook + create namespace + apply ConfigMaps
-AUTHBRIDGE_DEMO=true ./scripts/full-deploy.sh
+AUTHBRIDGE_DEMO=true ./scripts/webhook-rollout.sh
 ```
 
 Or specify a custom namespace:
 
 ```bash
-AUTHBRIDGE_DEMO=true AUTHBRIDGE_NAMESPACE=myapp ./scripts/full-deploy.sh
+AUTHBRIDGE_DEMO=true AUTHBRIDGE_NAMESPACE=myapp ./scripts/webhook-rollout.sh
 ```
 
 This automatically:
@@ -114,9 +114,9 @@ This creates:
 - `auth-target-aud` scope (adds "auth-target" to exchanged tokens)
 - `alice` demo user (for testing subject preservation)
 
-### Step 2: Create Namespace and ConfigMaps (Optional - already done for team1 by full-deploy.sh)
+### Step 2: Create Namespace and ConfigMaps (Optional - already done for team1 by webhook-rollout.sh)
 
-The `team1` namespace and all the configmaps are deployed during `./scripts/full-deploy.sh`
+The `team1` namespace and all the configmaps are deployed during `./scripts/webhook-rollout.sh`
 script execution.
 
 ```bash
@@ -308,7 +308,7 @@ kubectl logs deployment/agent -n team1 -c spiffe-helper
 | `k8s/agent-deployment-webhook.yaml` | Agent deployment with webhook labels |
 | `k8s/auth-target-deployment-webhook.yaml` | Auth target deployment (no injection) |
 | `setup_keycloak-webhook.py` | Keycloak setup script for webhook deployments |
-| `../kagenti-webhook/scripts/full-deploy.sh` | Automated deployment script (use with `AUTHBRIDGE_DEMO=true`) |
+| `../kagenti-webhook/scripts/webhook-rollout.sh` | Automated deployment script (use with `AUTHBRIDGE_DEMO=true`) |
 
 ## Cleanup
 
