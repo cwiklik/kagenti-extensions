@@ -63,23 +63,33 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # 5. Extract Docker metadata (tags from git tag or branch)
+      # 5. Generate image tag
+      - name: Generate image tag
+        id: tag
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            echo "tag=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+          else
+            # Use branch name or 'manual' for workflow_dispatch
+            BRANCH="${{ github.ref_name }}"
+            # Sanitize branch name (replace / with -)
+            BRANCH="${BRANCH//\//-}"
+            echo "tag=${BRANCH}-$(echo ${{ github.sha }} | cut -c1-7)" >> $GITHUB_OUTPUT
+          fi
+
+      # 6. Extract Docker metadata
       - name: Extract Docker metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository }}/${{ matrix.image_config.name }}
           tags: |
-            # Use git tag if available (e.g., v1.0.0)
-            type=ref,event=tag
-            # Use branch name for workflow_dispatch or branch pushes
-            type=ref,event=branch
-            # Add 'latest' tag on default branch
-            type=raw,value=latest,enable={{is_default_branch}}
-            # Add short SHA for traceability
-            type=sha,prefix=,format=short
+            # Always use the computed tag
+            type=raw,value=${{ steps.tag.outputs.tag }}
+            # Add 'latest' tag only for version tags on main
+            type=raw,value=latest,enable=${{ github.ref_type == 'tag' && startsWith(github.ref_name, 'v') }}
 
-      # 6. Build and push image
+      # 7. Build and push image
       - name: Build and push ${{ matrix.image_config.name }}
         uses: docker/build-push-action@v6
         with:
