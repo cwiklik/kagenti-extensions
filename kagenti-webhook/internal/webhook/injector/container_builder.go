@@ -34,8 +34,8 @@ const (
 
 	// Default images - use localhost for local Kind/minikube clusters
 	// TODO: Update to ghcr.io/kagenti/kagenti-extensions/ once images are published
-	DefaultEnvoyImage     = "localhost/envoy-with-processor:latest"
-	DefaultProxyInitImage = "localhost/proxy-init:latest"
+	DefaultEnvoyImage     = "ghcr.io/kagenti/kagenti-extensions/envoy-with-processor:latest"
+	DefaultProxyInitImage = "ghcr.io/kagenti/kagenti-extensions/proxy-init:latest"
 
 	// Envoy proxy configuration
 	EnvoyProxyUID  = 1337
@@ -229,8 +229,8 @@ tail -f /dev/null
 	}
 
 	return corev1.Container{
-		Name: ClientRegistrationContainerName,
-		Image: "ghcr.io/kagenti/kagenti-extensions/client-registration:latest",
+		Name:            ClientRegistrationContainerName,
+		Image:           "ghcr.io/kagenti/kagenti-extensions/client-registration:latest",
 		ImagePullPolicy: corev1.PullIfNotPresent,
 		Resources: corev1.ResourceRequirements{
 			Limits: corev1.ResourceList{
