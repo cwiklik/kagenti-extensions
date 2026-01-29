@@ -206,7 +206,7 @@ func (m *PodMutator) NeedsMutation(ctx context.Context, namespace string, labels
 	// First, check if this is an agent workload (required for authbridge injection)
 	kagentiType, hasKagentiLabel := labels[KagentiTypeLabel]
 	if !hasKagentiLabel || (kagentiType != KagentiTypeAgent && kagentiType != KagentiTypeTool) {
-		mutatorLog.Info("Skipping mutation: workload is not an agent",
+		mutatorLog.Info("Skipping mutation: workload is not an agent or a tool",
 			"hasLabel", hasKagentiLabel,
 			"labelValue", kagentiType)
 		return false, nil
