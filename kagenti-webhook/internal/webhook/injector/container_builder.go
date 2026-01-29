@@ -230,9 +230,7 @@ tail -f /dev/null
 
 	return corev1.Container{
 		Name: ClientRegistrationContainerName,
-		// // Use the following image after we have solidified kagenti-extensions
-		// Image:           "ghcr.io/kagenti/kagenti-extensions/client-registration:latest",
-		Image:           "ghcr.io/kagenti/kagenti/client-registration:latest",
+		Image: "ghcr.io/kagenti/kagenti-extensions/client-registration:latest",
 		ImagePullPolicy: corev1.PullIfNotPresent,
 		Resources: corev1.ResourceRequirements{
 			Limits: corev1.ResourceList{
