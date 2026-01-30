@@ -48,10 +48,11 @@ The kagenti-webhook watches for deployments with the `kagenti.io/inject: enabled
 1. **Kubernetes cluster** with the kagenti-webhook installed
 2. **Keycloak** deployed in the `keycloak` namespace
 3. **SPIRE** deployed (optional, for SPIFFE-based identity)
-4. **AuthBridge images** built and available:
-   - `localhost/proxy-init:latest`
-   - `localhost/envoy-with-processor:latest`
-   - `localhost/demo-app:latest`
+4. **AuthBridge images** available from GitHub Container Registry:
+   - `ghcr.io/kagenti/kagenti-extensions/proxy-init:latest`
+   - `ghcr.io/kagenti/kagenti-extensions/envoy-with-processor:latest`
+   - `ghcr.io/kagenti/kagenti-extensions/demo-app:latest`
+   - `ghcr.io/kagenti/kagenti-extensions/client-registration:latest`
 
 ---
 
@@ -279,13 +280,16 @@ kubectl logs deployment/agent -n team1 -c spiffe-helper
    - Apply `k8s/configmaps-webhook.yaml` to the target namespace
 
 4. **Image pull errors**
-   - Build and load AuthBridge images locally:
+   - Images are automatically pulled from `ghcr.io/kagenti/kagenti-extensions/`
+   - If you need to build locally for development:
      ```bash
      cd AuthBridge/AuthProxy
      make build
+     # Load into Kind cluster
      kind load docker-image --name <cluster> localhost/proxy-init:latest
      kind load docker-image --name <cluster> localhost/envoy-with-processor:latest
      ```
+   - Update `container_builder.go` to use `localhost/` images if testing locally
 
 5. **SPIFFE credentials not ready**
    - Ensure SPIRE is deployed and the workload is registered
