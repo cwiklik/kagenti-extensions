@@ -10,7 +10,7 @@ The kagenti-webhook watches for deployments with the `kagenti.io/inject: enabled
 |-----------|---------|
 | `proxy-init` | Init container that sets up iptables to redirect outbound traffic |
 | `spiffe-helper` | Fetches SPIFFE credentials from SPIRE (only with `kagenti.io/spire: enabled`) |
-| `kagenti-client-registration` | Registers the workload with Keycloak using SPIFFE ID |
+| `kagenti-client-registration` | Registers the workload with Keycloak (using SPIFFE ID or static client ID) |
 | `envoy-proxy` | Intercepts outbound HTTP requests and performs token exchange |
 
 ## Architecture
@@ -147,8 +147,13 @@ Deploy the target service and agent workload:
 # Note: auth-target has kagenti.io/inject: disabled to prevent sidecar injection
 kubectl apply -f k8s/auth-target-deployment-webhook.yaml
 
-# Deploy agent (webhook will inject sidecars)
+# Deploy agent - choose ONE of the following:
+
+# Option A: With SPIFFE (requires SPIRE)
 kubectl apply -f k8s/agent-deployment-webhook.yaml
+
+# Option B: Without SPIFFE (uses static client ID)
+kubectl apply -f k8s/agent-deployment-webhook-no-spiffe.yaml
 
 # Wait for the pods to be ready:
 kubectl wait --for=condition=available --timeout=180s deployment/auth-target -n team1
@@ -159,7 +164,8 @@ Verify the injected containers:
 
 ```bash
 kubectl get pod -n team1 -l app=agent -o jsonpath='{.items[0].spec.containers[*].name}'
-# Expected: agent spiffe-helper kagenti-client-registration envoy-proxy
+# Expected (with SPIFFE):    agent spiffe-helper kagenti-client-registration envoy-proxy
+# Expected (without SPIFFE): agent kagenti-client-registration envoy-proxy
 ```
 
 ## Step 4: Enable Service Accounts (One-time Setup)
@@ -299,17 +305,21 @@ kubectl logs deployment/agent -n team1 -c spiffe-helper
 
 | Label | Value | Description |
 |-------|-------|-------------|
+| `kagenti.io/type` | `agent` | **Required**: Identifies workload as an agent |
 | `kagenti.io/inject` | `enabled` | Enable AuthBridge sidecar injection |
 | `kagenti.io/inject` | `disabled` | Disable injection (for target services) |
 | `kagenti.io/spire` | `enabled` | Enable SPIFFE-based identity with SPIRE |
 | `kagenti.io/spire` | `disabled` | Use static client ID (no SPIRE) |
+
+**Note**: All labels must be on the **Pod template** (`spec.template.metadata.labels`), not the Deployment metadata.
 
 ## Files Reference
 
 | File | Description |
 |------|-------------|
 | `k8s/configmaps-webhook.yaml` | All required ConfigMaps |
-| `k8s/agent-deployment-webhook.yaml` | Agent deployment with webhook labels |
+| `k8s/agent-deployment-webhook.yaml` | Agent deployment with SPIFFE (webhook labels) |
+| `k8s/agent-deployment-webhook-no-spiffe.yaml` | Agent deployment without SPIFFE (static client ID) |
 | `k8s/auth-target-deployment-webhook.yaml` | Auth target deployment (no injection) |
 | `setup_keycloak-webhook.py` | Keycloak setup script for webhook deployments |
 | `../kagenti-webhook/scripts/webhook-rollout.sh` | Automated deployment script (use with `AUTHBRIDGE_DEMO=true`) |
