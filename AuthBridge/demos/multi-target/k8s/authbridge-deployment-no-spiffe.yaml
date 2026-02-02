@@ -194,19 +194,6 @@ data:
       target_audience: "target-gamma"
       token_scopes: "openid target-gamma-aud"
 
-    # Also match short service names (within cluster)
-    - host: "target-alpha-service"
-      target_audience: "target-alpha"
-      token_scopes: "openid target-alpha-aud"
-
-    - host: "target-beta-service"
-      target_audience: "target-beta"
-      token_scopes: "openid target-beta-aud"
-
-    - host: "target-gamma-service"
-      target_audience: "target-gamma"
-      token_scopes: "openid target-gamma-aud"
-
 ---
 # =============================================================================
 # CALLER POD (No SPIFFE)
