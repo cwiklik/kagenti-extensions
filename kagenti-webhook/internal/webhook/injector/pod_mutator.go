@@ -252,8 +252,7 @@ func (m *PodMutator) InjectSidecarsWithSpireOption(podSpec *corev1.PodSpec, name
 
 	// Check and inject client-registration sidecar (with SPIRE option)
 	if !containerExists(podSpec.Containers, ClientRegistrationContainerName) {
-		clientID := fmt.Sprintf("%s/%s", namespace, crName)
-		podSpec.Containers = append(podSpec.Containers, BuildClientRegistrationContainerWithSpireOption(clientID, crName, namespace, spireEnabled))
+		podSpec.Containers = append(podSpec.Containers, BuildClientRegistrationContainerWithSpireOption(crName, namespace, spireEnabled))
 	}
 
 	// Check and inject envoy-proxy sidecar
