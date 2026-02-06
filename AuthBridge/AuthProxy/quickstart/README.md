@@ -22,7 +22,7 @@ The demo goes as follows:
 1. Test the flow
 
 ## Step 1: Install Kagenti
-First, we recommend to deploy Kagenti to a local Kind cluster with the Ansible installer. Instructions are available [here](https://github.com/kagenti/kagenti/blob/main/docs/install.md#ansible-based-installer-recommended).
+First, we recommend to deploy Kagenti to a local Kind cluster with the Ansible installer as service urls used below are derived from that installation. Instructions are available [here](https://github.com/kagenti/kagenti/blob/main/docs/install.md#ansible-based-installer-recommended).
 
 This should start a local Kind cluster named `kagenti`.
 
@@ -96,6 +96,7 @@ AUTHPROXY_SECRET=$(curl -s -H "Authorization: Bearer $ADMIN_TOKEN" \
 kubectl create secret generic auth-proxy-config \
   --from-literal=TOKEN_URL="http://keycloak-service.keycloak.svc.cluster.local:8080/realms/demo/protocol/openid-connect/token" \
   --from-literal=ISSUER="http://keycloak.localtest.me:8080/realms/demo" \
+  --from-literal=EXPECTED_AUDIENCE="authproxy" \
   --from-literal=CLIENT_ID="authproxy" \
   --from-literal=CLIENT_SECRET="$AUTHPROXY_SECRET" \
   --from-literal=TARGET_AUDIENCE="demoapp" \

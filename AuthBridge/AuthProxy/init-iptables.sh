@@ -5,6 +5,7 @@ set -e
 PROXY_PORT="${PROXY_PORT:-15123}"
 INBOUND_PROXY_PORT="${INBOUND_PROXY_PORT:-15124}"
 PROXY_UID="${PROXY_UID:-1337}"
+SSH_PORT="${SSH_PORT:-22}"
 OUTBOUND_PORTS_EXCLUDE="${OUTBOUND_PORTS_EXCLUDE:-}"
 INBOUND_PORTS_EXCLUDE="${INBOUND_PORTS_EXCLUDE:-}"
 
@@ -34,7 +35,7 @@ iptables -t nat -A PROXY_OUTPUT -m owner --uid-owner "${PROXY_UID}" -j RETURN
 iptables -t nat -A PROXY_OUTPUT -m owner --uid-owner "${ZTUNNEL_UID}" -j RETURN
 
 # Exclude SSH traffic
-iptables -t nat -A PROXY_OUTPUT -p tcp --dport 22 -j RETURN
+iptables -t nat -A PROXY_OUTPUT -p tcp --dport "${SSH_PORT}" -j RETURN
 
 # Exclude localhost traffic
 iptables -t nat -A PROXY_OUTPUT -p tcp -d 127.0.0.1/32 -j RETURN
@@ -86,7 +87,7 @@ iptables -t nat -A PROXY_INBOUND -p tcp --dport 9090 -j RETURN
 iptables -t nat -A PROXY_INBOUND -p tcp --dport 9901 -j RETURN
 
 # Exclude SSH traffic
-iptables -t nat -A PROXY_INBOUND -p tcp --dport 22 -j RETURN
+iptables -t nat -A PROXY_INBOUND -p tcp --dport "${SSH_PORT}" -j RETURN
 
 # Exclude Istio ztunnel ports
 iptables -t nat -A PROXY_INBOUND -p tcp --dport "${ZTUNNEL_INBOUND_PORT}" -j RETURN

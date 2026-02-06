@@ -146,9 +146,10 @@ func getConfig() (clientID, clientSecret, tokenURL, targetAudience, targetScopes
 }
 
 var (
-	jwksCache      *jwk.Cache
-	inboundJWKSURL string
-	inboundIssuer  string
+	jwksCache        *jwk.Cache
+	inboundJWKSURL   string
+	inboundIssuer    string
+	expectedAudience string
 )
 
 // deriveJWKSURL derives the JWKS URL from the token endpoint URL.
@@ -158,6 +159,9 @@ func deriveJWKSURL(tokenURL string) string {
 }
 
 // initJWKSCache initializes the JWKS cache for inbound token validation.
+// The cache uses a default refresh window of 15 minutes. This means JWKS keys
+// are automatically refreshed in the background, helping to prevent validation
+// failures due to stale keys (e.g., after key rotation).
 func initJWKSCache(jwksURL string) {
 	ctx := context.Background()
 	jwksCache = jwk.NewCache(ctx)
@@ -187,6 +191,25 @@ func validateInboundJWT(tokenString, jwksURL, expectedIssuer string) error {
 
 	if token.Issuer() != expectedIssuer {
 		return fmt.Errorf("invalid issuer: expected %s, got %s", expectedIssuer, token.Issuer())
+	}
+
+	// Validate audience if EXPECTED_AUDIENCE is configured.
+	// This is optional to support flexible deployment scenarios:
+	// - Set EXPECTED_AUDIENCE for strict zero-trust validation
+	// - Leave unset if audience validation is handled elsewhere (e.g., downstream service)
+	// - In service mesh scenarios, the audience might vary based on routing
+	if expectedAudience != "" {
+		audiences := token.Audience()
+		audienceValid := false
+		for _, aud := range audiences {
+			if aud == expectedAudience {
+				audienceValid = true
+				break
+			}
+		}
+		if !audienceValid {
+			return fmt.Errorf("invalid audience: expected %s, got %v", expectedAudience, audiences)
+		}
 	}
 
 	log.Printf("[Inbound] Token validated - issuer: %s, audience: %v", token.Issuer(), token.Audience())
@@ -455,10 +478,16 @@ func main() {
 	// Initialize inbound JWT validation
 	_, _, tokenURL, _, _ := getConfig()
 	inboundIssuer = os.Getenv("ISSUER")
+	expectedAudience = os.Getenv("EXPECTED_AUDIENCE")
 	if tokenURL != "" && inboundIssuer != "" {
 		inboundJWKSURL = deriveJWKSURL(tokenURL)
 		initJWKSCache(inboundJWKSURL)
 		log.Printf("[Inbound] Issuer: %s", inboundIssuer)
+		if expectedAudience != "" {
+			log.Printf("[Inbound] Expected audience: %s", expectedAudience)
+		} else {
+			log.Printf("[Inbound] Audience validation disabled (EXPECTED_AUDIENCE not set)")
+		}
 	} else {
 		if tokenURL == "" {
 			log.Println("[Inbound] TOKEN_URL not configured, inbound JWT validation disabled")

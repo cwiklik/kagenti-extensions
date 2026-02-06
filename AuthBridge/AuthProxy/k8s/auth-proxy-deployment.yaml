@@ -87,6 +87,12 @@ spec:
             secretKeyRef:
               name: auth-proxy-config
               key: ISSUER
+        - name: EXPECTED_AUDIENCE
+          valueFrom:
+            secretKeyRef:
+              name: auth-proxy-config
+              key: EXPECTED_AUDIENCE
+              optional: true
         - name: CLIENT_ID
           valueFrom:
             secretKeyRef:
