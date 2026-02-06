@@ -327,6 +327,8 @@ kubectl create configmap environments -n {namespace} \\
 # 2. authbridge-config ConfigMap (for envoy-proxy)
 kubectl create configmap authbridge-config -n {namespace} \\
   --from-literal=TOKEN_URL=http://keycloak-service.keycloak.svc:8080/realms/demo/protocol/openid-connect/token \\
+  --from-literal=ISSUER=http://keycloak.localtest.me:8080/realms/demo \\
+  --from-literal=EXPECTED_AUDIENCE=spiffe://localtest.me/ns/{namespace}/sa/{service_account} \\
   --from-literal=TARGET_AUDIENCE=auth-target \\
   --from-literal=TARGET_SCOPES="openid auth-target-aud"
 

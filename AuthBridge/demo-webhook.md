@@ -137,10 +137,20 @@ kubectl label namespace team1 kagenti-enabled=true --overwrite
 kubectl apply -f k8s/configmaps-webhook.yaml
 ```
 
+**Note for custom deployments:** If deploying to a different namespace or using a different service account, update the `EXPECTED_AUDIENCE` value in `configmaps-webhook.yaml` to match your agent's SPIFFE ID:
+```yaml
+EXPECTED_AUDIENCE: "spiffe://localtest.me/ns/<your-namespace>/sa/<your-service-account>"
+```
+
 The ConfigMaps include:
 
 - `environments` - Keycloak connection settings for client-registration
-- `authbridge-config` - Token exchange and inbound validation configuration for envoy-proxy (`TOKEN_URL`, `ISSUER`, `TARGET_AUDIENCE`, `TARGET_SCOPES`)
+- `authbridge-config` - Token exchange and inbound validation configuration for envoy-proxy:
+  - `TOKEN_URL` - Keycloak token endpoint for token exchange
+  - `ISSUER` - Expected JWT issuer for inbound validation (required)
+  - `EXPECTED_AUDIENCE` - Expected audience for inbound validation (optional, defaults to team1/agent SPIFFE ID)
+  - `TARGET_AUDIENCE` - Target audience for outbound token exchange
+  - `TARGET_SCOPES` - Scopes for exchanged tokens
 - `spiffe-helper-config` - SPIFFE helper configuration (for SPIRE mode)
 - `envoy-config` - Envoy proxy configuration
 

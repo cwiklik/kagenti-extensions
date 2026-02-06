@@ -24,7 +24,7 @@ data:
   KEYCLOAK_ADMIN_PASSWORD: "admin"
 
 ---
-# authbridge-config ConfigMap - Used by envoy-proxy for token exchange
+# authbridge-config ConfigMap - Used by envoy-proxy for token exchange and inbound validation
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -35,6 +35,12 @@ data:
   # ISSUER: Required. Keycloak frontend URL used as token issuer for inbound JWT validation.
   # Must match the "iss" claim in tokens (Keycloak's frontend URL).
   ISSUER: "http://keycloak.localtest.me:8080/realms/demo"
+  # EXPECTED_AUDIENCE: Optional. Expected audience for inbound JWT validation.
+  # For SPIFFE-based deployments, this should match the agent's SPIFFE ID.
+  # Format: spiffe://localtest.me/ns/<namespace>/sa/<service-account>
+  # Update this value if deploying to a different namespace or using a different service account.
+  # If not set, audience validation is skipped (issuer and signature validation still occur).
+  EXPECTED_AUDIENCE: "spiffe://localtest.me/ns/team1/sa/agent"
   TARGET_AUDIENCE: "auth-target"
   TARGET_SCOPES: "openid auth-target-aud"
 

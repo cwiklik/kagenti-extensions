@@ -328,6 +328,18 @@ func BuildEnvoyProxyContainer() corev1.Container {
 						Optional: ptr.To(false),
 					},
 				},
+		},
+		{
+			Name: "EXPECTED_AUDIENCE",
+			ValueFrom: &corev1.EnvVarSource{
+				ConfigMapKeyRef: &corev1.ConfigMapKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: "authbridge-config",
+					},
+					Key:      "EXPECTED_AUDIENCE",
+					Optional: ptr.To(true),
+				},
+			},
 			},
 			{
 				Name: "TARGET_AUDIENCE",
