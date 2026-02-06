@@ -14,6 +14,8 @@ COPY client_registration.py .
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Ensure non-root user owns application directory
+RUN chown -R 1000:1000 /app
 # Switch to non-root user
 USER 1000:1000
 
