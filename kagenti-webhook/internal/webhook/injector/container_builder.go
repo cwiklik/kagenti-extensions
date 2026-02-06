@@ -37,9 +37,9 @@ const (
 	DefaultProxyInitImage = "ghcr.io/kagenti/kagenti-extensions/proxy-init:latest"
 
 	// Envoy proxy configuration
-	EnvoyProxyUID  = 1337
-	EnvoyProxyPort = 15123
- 	EnvoyInboundProxyPort = 15124
+	EnvoyProxyUID         = 1337
+	EnvoyProxyPort        = 15123
+	EnvoyInboundProxyPort = 15124
 
 	// Client registration container configuration
 	// Keep in sync with AuthBridge/client-registration/Dockerfile
