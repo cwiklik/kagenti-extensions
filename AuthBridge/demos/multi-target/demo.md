@@ -24,11 +24,11 @@ Agent Pod                                    Target Pods
 
 The AuthProxy automatically exchanges tokens based on the destination host:
 
-| Host | Target Audience | Scope |
-|------|-----------------|-------|
-| `target-alpha-service.authbridge.svc.cluster.local` | `target-alpha` | `target-alpha-aud` |
-| `target-beta-service.authbridge.svc.cluster.local` | `target-beta` | `target-beta-aud` |
-| `target-gamma-service.authbridge.svc.cluster.local` | `target-gamma` | `target-gamma-aud` |
+| Host Pattern | Target Audience | Scope |
+|--------------|-----------------|-------|
+| `target-alpha-service*` | `target-alpha` | `target-alpha-aud` |
+| `target-beta-service*` | `target-beta` | `target-beta-aud` |
+| `target-gamma-service*` | `target-gamma` | `target-gamma-aud` |
 
 ## Prerequisites
 
@@ -133,100 +133,81 @@ kubectl wait --for=condition=available --timeout=120s deployment/target-gamma -n
 
 ## Test the Flow
 
-### Get a Token
+Run the demo script to see token exchange in action:
 
 ```bash
-kubectl exec -it deployment/agent -n authbridge -c agent -- sh -c '
-CLIENT_ID=$(cat /shared/client-id.txt)
-CLIENT_SECRET=$(cat /shared/client-secret.txt)
-
-TOKEN=$(curl -s http://keycloak-service.keycloak.svc:8080/realms/demo/protocol/openid-connect/token \
-  -d "grant_type=client_credentials" \
-  -d "client_id=$CLIENT_ID" \
-  -d "client_secret=$CLIENT_SECRET" | jq -r ".access_token")
-
-echo "Original token audience:"
-echo $TOKEN | cut -d. -f2 | tr "_-" "/+" | { read p; echo "${p}=="; } | base64 -d | jq -r .aud
-'
-```
-
-### Call Each Target
-
-The AuthProxy exchanges the token for the appropriate audience based on the destination host:
-
-```bash
-kubectl exec deployment/agent -n authbridge -c agent -- sh -c '
-CLIENT_ID=$(cat /shared/client-id.txt)
-CLIENT_SECRET=$(cat /shared/client-secret.txt)
-TOKEN=$(curl -s http://keycloak-service.keycloak.svc:8080/realms/demo/protocol/openid-connect/token \
-  -d "grant_type=client_credentials" -d "client_id=$CLIENT_ID" -d "client_secret=$CLIENT_SECRET" | jq -r ".access_token")
-
-echo "=== Calling Target Alpha ==="
-curl -s -H "Authorization: Bearer $TOKEN" http://target-alpha-service:8081/test
-echo ""
-
-echo "=== Calling Target Beta ==="
-curl -s -H "Authorization: Bearer $TOKEN" http://target-beta-service:8081/test
-echo ""
-
-echo "=== Calling Target Gamma ==="
-curl -s -H "Authorization: Bearer $TOKEN" http://target-gamma-service:8081/test
-echo ""
-'
+./demos/multi-target/run-demo-commands.sh
 ```
 
 Expected output:
+
 ```
-=== Calling Target Alpha ===
+=== Original Token (before exchange) ===
+  Client ID:  spiffe://localtest.me/ns/authbridge/sa/agent
+  Audience:   (none - client credentials token)
+  Scopes:     profile email
+
+=== After Token Exchange (for target-alpha) ===
+  Audience:   target-alpha
+  Scopes:     openid profile target-alpha-aud email
+
+=== Calling All Targets (AuthBridge exchanges automatically) ===
+
+Target Alpha:
 authorized
-=== Calling Target Beta ===
+Target Beta:
 authorized
-=== Calling Target Gamma ===
+Target Gamma:
 authorized
+
+=== AuthBridge Token Exchange Logs ===
+[Routes] Host "target-alpha-service" matched pattern "target-alpha-service*"
+[Routes] Using route target_audience: target-alpha
+[Token Exchange] Successfully exchanged token, replacing Authorization header
+[Routes] Host "target-beta-service" matched pattern "target-beta-service*"
+[Routes] Using route target_audience: target-beta
+[Token Exchange] Successfully exchanged token, replacing Authorization header
+[Routes] Host "target-gamma-service" matched pattern "target-gamma-service*"
+[Routes] Using route target_audience: target-gamma
+[Token Exchange] Successfully exchanged token, replacing Authorization header
 ```
 
-## Verify Token Exchange
-
-Check the envoy-proxy logs to see the token exchange in action:
-
-```bash
-kubectl logs deployment/agent -n authbridge -c envoy-proxy | grep -i "matched\|resolver"
-```
-
-Expected output:
-```
-[Resolver] Host "target-alpha-service" matched pattern "target-alpha-service"
-[Resolver] Host "target-beta-service" matched pattern "target-beta-service"
-[Resolver] Host "target-gamma-service" matched pattern "target-gamma-service"
-```
+The output shows:
+1. **Original token** has no audience and basic scopes (`profile email`)
+2. **After exchange** the token has `target-alpha` as audience and includes `target-alpha-aud` scope
+3. **All targets** return "authorized" because AuthBridge exchanges the token automatically
+4. **Logs** show each host being matched and the token exchange succeeding
 
 ## How It Works
 
-1. Agent obtains a token from Keycloak (audience: agent's SPIFFE ID)
-2. Agent makes HTTP request to a target service
-3. Envoy intercepts the request and sends headers to ext-proc
-4. ext-proc looks up the route configuration in `routes.yaml`
-5. ext-proc exchanges the token for one with the target's audience
+1. Agent obtains a token from Keycloak using client credentials (no specific audience)
+2. Agent makes HTTP request to a target service with this token
+3. Envoy intercepts the request and sends headers to the ext-proc (go-processor)
+4. ext-proc resolves the destination host against `routes.yaml` configuration
+5. ext-proc performs OAuth 2.0 Token Exchange (RFC 8693) to get a new token with:
+   - The target's audience (e.g., `target-alpha`)
+   - The target's required scopes (e.g., `openid target-alpha-aud`)
 6. Envoy forwards the request with the exchanged token
-7. Target validates the token and returns "authorized"
+7. Target validates the token audience and returns "authorized"
 
 ## Routes Configuration
 
-The `routes.yaml` file maps hosts to token exchange parameters:
+The `routes.yaml` file maps hosts to token exchange parameters. Glob patterns are used to match
+both short hostnames and FQDNs:
 
 ```yaml
-# Target Alpha
-- host: "target-alpha-service.authbridge.svc.cluster.local"
+# Target Alpha - matches both short name and FQDN
+- host: "target-alpha-service*"
   target_audience: "target-alpha"
   token_scopes: "openid target-alpha-aud"
 
-# Target Beta
-- host: "target-beta-service.authbridge.svc.cluster.local"
+# Target Beta - matches both short name and FQDN
+- host: "target-beta-service*"
   target_audience: "target-beta"
   token_scopes: "openid target-beta-aud"
 
-# Target Gamma
-- host: "target-gamma-service.authbridge.svc.cluster.local"
+# Target Gamma - matches both short name and FQDN
+- host: "target-gamma-service*"
   target_audience: "target-gamma"
   token_scopes: "openid target-gamma-aud"
 ```
