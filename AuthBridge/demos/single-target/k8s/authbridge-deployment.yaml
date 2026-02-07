@@ -467,6 +467,13 @@ spec:
           env:
             - name: TARGET_SERVICE_URL
               value: "http://auth-target-service:8081"
+            - name: JWKS_URL
+              value: "http://keycloak-service.keycloak.svc.cluster.local:8080/realms/demo/protocol/openid-connect/certs"
+            - name: ISSUER
+              valueFrom:
+                secretKeyRef:
+                  name: auth-proxy-config
+                  key: ISSUER
           resources:
             limits:
               cpu: 500m
