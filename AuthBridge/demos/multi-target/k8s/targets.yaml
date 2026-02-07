@@ -28,8 +28,8 @@ spec:
     spec:
       containers:
       - name: target-alpha
-        image: localhost/demo-app:latest
-        imagePullPolicy: Never
+        image: demo-app:latest
+        imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8081
         env:
@@ -81,8 +81,8 @@ spec:
     spec:
       containers:
       - name: target-beta
-        image: localhost/demo-app:latest
-        imagePullPolicy: Never
+        image: demo-app:latest
+        imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8081
         env:
@@ -134,8 +134,8 @@ spec:
     spec:
       containers:
       - name: target-gamma
-        image: localhost/demo-app:latest
-        imagePullPolicy: Never
+        image: demo-app:latest
+        imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8081
         env:
