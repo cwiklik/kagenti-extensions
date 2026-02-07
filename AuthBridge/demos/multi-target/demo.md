@@ -161,14 +161,14 @@ Target Gamma:
 authorized
 
 === AuthBridge Token Exchange Logs ===
-[Routes] Host "target-alpha-service" matched pattern "target-alpha-service*"
-[Routes] Using route target_audience: target-alpha
+[Resolver] Host "target-alpha-service" matched "target-alpha-service*"
+[Resolver] Using route target_audience: target-alpha
 [Token Exchange] Successfully exchanged token, replacing Authorization header
-[Routes] Host "target-beta-service" matched pattern "target-beta-service*"
-[Routes] Using route target_audience: target-beta
+[Resolver] Host "target-beta-service" matched "target-beta-service*"
+[Resolver] Using route target_audience: target-beta
 [Token Exchange] Successfully exchanged token, replacing Authorization header
-[Routes] Host "target-gamma-service" matched pattern "target-gamma-service*"
-[Routes] Using route target_audience: target-gamma
+[Resolver] Host "target-gamma-service" matched "target-gamma-service*"
+[Resolver] Using route target_audience: target-gamma
 [Token Exchange] Successfully exchanged token, replacing Authorization header
 ```
 

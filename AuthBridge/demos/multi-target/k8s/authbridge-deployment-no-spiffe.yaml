@@ -111,27 +111,7 @@ data:
                     route:
                       cluster: original_destination
               http_filters:
-              # Lua filter to inject token exchange credentials as headers
-              - name: envoy.filters.http.lua
-                typed_config:
-                  "@type": type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
-                  inline_code: |
-                    function envoy_on_request(request_handle)
-                      local token_url = os.getenv("TOKEN_URL")
-                      local client_id = os.getenv("CLIENT_ID")
-                      local client_secret = os.getenv("CLIENT_SECRET")
-
-                      -- Add token exchange credentials from environment
-                      if token_url ~= nil and token_url ~= "" then
-                        request_handle:headers():add("x-token-url", token_url)
-                      end
-                      if client_id ~= nil and client_id ~= "" then
-                        request_handle:headers():add("x-client-id", client_id)
-                      end
-                      if client_secret ~= nil and client_secret ~= "" then
-                        request_handle:headers():add("x-client-secret", client_secret)
-                      end
-                    end
+              # External processor to mutate headers (token exchange)
               - name: envoy.filters.http.ext_proc
                 typed_config:
                   "@type": type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExternalProcessor
@@ -179,18 +159,18 @@ data:
     # Each route maps a destination host to token exchange parameters.
     # Order matters - first match wins.
 
-    # Target Alpha
-    - host: "target-alpha-service.authbridge.svc.cluster.local"
+    # Target Alpha - matches both short name and FQDN
+    - host: "target-alpha-service*"
       target_audience: "target-alpha"
       token_scopes: "openid target-alpha-aud"
 
-    # Target Beta
-    - host: "target-beta-service.authbridge.svc.cluster.local"
+    # Target Beta - matches both short name and FQDN
+    - host: "target-beta-service*"
       target_audience: "target-beta"
       token_scopes: "openid target-beta-aud"
 
-    # Target Gamma
-    - host: "target-gamma-service.authbridge.svc.cluster.local"
+    # Target Gamma - matches both short name and FQDN
+    - host: "target-gamma-service*"
       target_audience: "target-gamma"
       token_scopes: "openid target-gamma-aud"
 
