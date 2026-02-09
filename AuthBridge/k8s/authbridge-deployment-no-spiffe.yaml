@@ -5,13 +5,14 @@
 #
 # Flow:
 #   Inbound:  Client -> Envoy (validates JWT via ext proc) -> AuthProxy (forwards)
-#   Outbound: AuthProxy -> Envoy (exchanges token via ext proc) -> Auth Target
+#   Outbound HTTP:  AuthProxy -> Envoy (exchanges token via ext proc) -> Auth Target
+#   Outbound HTTPS: AuthProxy -> Envoy (TLS passthrough via tcp_proxy) -> Auth Target
 #
 # Pod 1: Caller Pod
 #   - Caller: The calling application
 #   - Client Registration (init): Registers caller with Keycloak using static client ID
 #   - AuthProxy: Simple pass-through proxy (JWT validation handled by ext proc)
-#   - Envoy: Intercepts inbound traffic (JWT validation) and outbound traffic (token exchange)
+#   - Envoy: Intercepts inbound traffic (JWT validation) and outbound traffic (HTTP: token exchange; HTTPS: TLS passthrough)
 #
 # Pod 2: Auth Target (Target Server)
 #   - Validates tokens with audience "auth-target"
@@ -104,8 +105,23 @@ data:
         - name: envoy.filters.listener.original_dst
           typed_config:
             "@type": type.googleapis.com/envoy.extensions.filters.listener.original_dst.v3.OriginalDst
+        - name: envoy.filters.listener.tls_inspector
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.filters.listener.tls_inspector.v3.TlsInspector
         filter_chains:
-        - filters:
+        # TLS passthrough: forward HTTPS traffic as-is via TCP proxy
+        - filter_chain_match:
+            transport_protocol: tls
+          filters:
+          - name: envoy.filters.network.tcp_proxy
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy
+              stat_prefix: outbound_tls_passthrough
+              cluster: original_destination
+        # Plaintext HTTP: inspect and process via ext_proc
+        - filter_chain_match:
+            transport_protocol: raw_buffer
+          filters:
           - name: envoy.filters.network.http_connection_manager
             typed_config:
               "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
@@ -229,9 +245,9 @@ spec:
     metadata:
       labels:
         app: caller
-        istio.io/dataplane-mode: none
+        # istio.io/dataplane-mode: none
       annotations:
-        ambient.istio.io/redirection: disabled
+        # ambient.istio.io/redirection: disabled
         sidecar.istio.io/inject: "false"
     spec:
       serviceAccountName: caller
@@ -240,13 +256,10 @@ spec:
       initContainers:
         # Init container to set up iptables for traffic interception
         - name: proxy-init
-          image: proxy-init:latest
+          image: localhost/proxy-init:latest
           imagePullPolicy: IfNotPresent
           securityContext:
-            capabilities:
-              add:
-                - NET_ADMIN
-                - NET_RAW
+            privileged: true
             runAsNonRoot: false
             runAsUser: 0
           env:
@@ -361,7 +374,7 @@ spec:
               mountPath: /shared
         # AuthProxy - pass-through proxy (JWT validation handled by inbound ext proc)
         - name: auth-proxy
-          image: auth-proxy:latest
+          image: localhost/auth-proxy:latest
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
@@ -378,7 +391,7 @@ spec:
               memory: 128Mi
         # Envoy proxy - intercepts outgoing traffic and performs token exchange
         - name: envoy-proxy
-          image: envoy-with-processor:latest
+          image: localhost/envoy-with-processor:latest
           imagePullPolicy: IfNotPresent
           securityContext:
             runAsUser: 1337

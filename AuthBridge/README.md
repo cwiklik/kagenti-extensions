@@ -118,7 +118,7 @@ flowchart TB
 | `client-registration` | container | Registers workload with Keycloak using SPIFFE ID, saves credentials to `/shared/` |
 | `spiffe-helper` | container | Provides SPIFFE credentials (SVID) |
 | `auth-proxy` | container | Pass-through proxy (JWT validation handled by Ext Proc on inbound path) |
-| `envoy-proxy` | container | Intercepts inbound traffic (JWT validation) and outbound traffic (token exchange) via Ext Proc |
+| `envoy-proxy` | container | Intercepts inbound traffic (JWT validation) and outbound traffic (HTTP: token exchange via Ext Proc; HTTPS: TLS passthrough) |
 
 ### Target Service Pod
 

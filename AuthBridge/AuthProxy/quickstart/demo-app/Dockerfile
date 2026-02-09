@@ -27,6 +27,6 @@ WORKDIR /root/
 # Copy the binary from builder stage
 COPY --from=builder /app/target .
 
-EXPOSE 8081
+EXPOSE 8081 8443
 
 CMD ["./target"]

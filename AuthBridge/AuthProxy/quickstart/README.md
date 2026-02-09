@@ -6,13 +6,15 @@ The final architecture deployed is as follows:
 
 ```
 Caller  ──►  AuthProxy Pod  ──►  Demo App
-              (inbound: JWT validation)
-              (outbound: token exchange)
+              (inbound: JWT processing)
+              (outbound HTTP:  token exchange via ext_proc)
+              (outbound HTTPS: TLS passthrough via tcp_proxy)
 ```
 
 The AuthProxy pod intercepts traffic in both directions:
-- **Inbound**: Validates JWT tokens on incoming requests (returns 401 if invalid)
-- **Outbound**: Exchanges tokens for the correct audience before forwarding to the Demo App
+- **Inbound**: Processes JWT tokens on incoming requests (validates if present, returns 401 if invalid)
+- **Outbound HTTP**: Exchanges tokens for the correct audience before forwarding to the Demo App
+- **Outbound HTTPS**: Envoy detects TLS and passes traffic through as-is (no ext_proc, no token exchange)
 
 The demo goes as follows:
 1. Install Kagenti
@@ -139,23 +141,45 @@ export ACCESS_TOKEN=$(curl -s -X POST \
   -d "scope=openid authproxy-aud" | jq -r '.access_token')
 ```
 
+### HTTP test (token exchange via ext_proc)
+
 **Valid request (inbound validation passes, token exchange, forwarded to demo-app):**
 ```bash
 curl -H "Authorization: Bearer $ACCESS_TOKEN" http://localhost:9080/test
 # Expected response: "authorized"
 ```
 
-**Invalid token (rejected by inbound validation):**
+This exercises the full outbound HTTP path: Envoy intercepts the outbound request via `http_connection_manager`, the ext_proc exchanges the token for the `demoapp` audience, and demo-app validates the JWT.
+
+**Invalid token (rejected by demo-app JWT validation):**
 ```bash
 curl -H "Authorization: Bearer invalid-token" http://localhost:9080/test
 # Expected response: "unauthorized"
 ```
 
-**No authorization header (rejected by inbound validation):**
+**No authorization header (rejected by demo-app JWT validation):**
 ```bash
 curl http://localhost:9080/test
 # Expected response: "unauthorized: missing Authorization header"
 ```
+
+### HTTPS test (TLS passthrough)
+
+**HTTPS connectivity through Envoy TLS passthrough:**
+```bash
+curl -H "Authorization: Bearer $ACCESS_TOKEN" http://localhost:9080/tls-test
+# Expected response: "tls-ok"
+```
+
+This exercises the outbound HTTPS path: the auth-proxy makes an HTTPS request to `demo-app-service:8443`, Envoy detects TLS via `tls_inspector` and forwards it as-is through `tcp_proxy` (no ext_proc, no token exchange). The demo-app HTTPS port serves a simple echo response without JWT validation — it only proves HTTPS connectivity through TLS passthrough works.
+
+**No authorization header (passes through — no JWT validation on this path):**
+```bash
+curl http://localhost:9080/tls-test
+# Expected response: "tls-ok"
+```
+
+Note: The HTTPS path has no JWT validation at either end. The inbound ext_proc processes tokens when present but does not enforce that a token must exist. The outbound HTTPS path uses TLS passthrough (no ext_proc), and the demo-app HTTPS port has no JWT validation. Authentication on the HTTP path (`/test`) is enforced by the demo-app itself, which validates the exchanged token.
 
 ## Kubernetes Testing
 

@@ -46,10 +46,11 @@ AuthProxy is a **single sidecar container** that consists of:
 ### Envoy Proxy with Ext Proc Filter
 
 The sidecar runs an Envoy proxy with an external processor (ext-proc) filter:
-- **Envoy Proxy** (port **15123** outbound, port **15124** inbound): Intercepts all HTTP traffic from and to the application container
+- **Envoy Proxy** (port **15123** outbound, port **15124** inbound): Intercepts all traffic from and to the application container
 - **Ext Proc Filter** (`go-processor/main.go`, port **9090**): Handles both directions:
-  - **Inbound**: Validates JWT tokens (signature, issuer) using JWKS. Returns 401 Unauthorized for invalid or missing tokens.
-  - **Outbound**: Performs **OAuth 2.0 Token Exchange** ([RFC 8693](https://datatracker.ietf.org/doc/html/rfc8693)), replacing the `Authorization` header with an exchanged token for the target audience.
+  - **Inbound**: Validates JWT tokens (signature, issuer) using JWKS. Returns 401 Unauthorized for invalid tokens.
+  - **Outbound HTTP**: Performs **OAuth 2.0 Token Exchange** ([RFC 8693](https://datatracker.ietf.org/doc/html/rfc8693)), replacing the `Authorization` header with an exchanged token for the target audience.
+  - **Outbound HTTPS**: Envoy detects TLS via `tls_inspector` and passes traffic through as-is using `tcp_proxy` (no ext_proc, no token exchange). This ensures HTTPS connections are not broken by the sidecar.
   - Direction is detected via the `x-authbridge-direction` header injected by Envoy's inbound listener.
 
 ### Traffic Interception via iptables
@@ -109,9 +110,9 @@ When deployed as a sidecar, AuthProxy intercepts both **inbound** and **outbound
 
 **Outbound (outgoing requests):**
 1. **proxy-init** (init container): Sets up iptables OUTPUT rules to redirect outbound traffic to Envoy
-2. **Envoy** (port 15123): Intercepts outbound traffic, calls Ext Proc via gRPC
-3. **Ext Proc** (port 9090): Performs OAuth 2.0 token exchange with Keycloak, returns modified headers to Envoy
-4. **Envoy**: Applies the new Authorization header and forwards the request to the target service
+2. **Envoy** (port 15123): Intercepts outbound traffic, uses `tls_inspector` to detect the protocol:
+   - **HTTP (plaintext)**: Calls Ext Proc via gRPC for token exchange, then forwards with the new Authorization header
+   - **HTTPS (TLS)**: Passes traffic through as-is via `tcp_proxy` (no token exchange, preserving the original TLS connection)
 
 The application requires **no code changes**—traffic interception is completely transparent.
 

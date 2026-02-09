@@ -2,17 +2,28 @@ package main
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"fmt"
 	"log"
+	"math/big"
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/lestrrat-go/jwx/v2/jwk"
 	"github.com/lestrrat-go/jwx/v2/jwt"
 )
 
-const targetPort = "0.0.0.0:8081"
+const (
+	httpPort  = "0.0.0.0:8081"
+	httpsPort = "0.0.0.0:8443"
+)
 
 var jwksCache *jwk.Cache
 
@@ -39,14 +50,82 @@ func main() {
 		log.Fatalf("Failed to register JWKS URL: %v", err)
 	}
 
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	// HTTP server on port 8081 with JWT validation
+	httpMux := http.NewServeMux()
+	httpMux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		authHandler(w, r, jwksURL, issuer, audience)
 	})
-	log.Printf("Demo app starting on port %s", targetPort)
+
+	// HTTPS server on port 8443 — simple echo, no JWT validation.
+	// This port is used to verify TLS passthrough through Envoy works.
+	httpsMux := http.NewServeMux()
+	httpsMux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("tls-ok"))
+		log.Printf("HTTPS request served: %s %s", r.Method, r.URL.Path)
+	})
+
+	tlsCert, err := generateSelfSignedCert()
+	if err != nil {
+		log.Fatalf("Failed to generate self-signed TLS certificate: %v", err)
+	}
+
+	httpsServer := &http.Server{
+		Addr:    httpsPort,
+		Handler: httpsMux,
+		TLSConfig: &tls.Config{
+			Certificates: []tls.Certificate{tlsCert},
+		},
+	}
+
+	log.Printf("Demo app HTTP  starting on %s (JWT validation enabled)", httpPort)
+	log.Printf("Demo app HTTPS starting on %s (echo only, no JWT validation)", httpsPort)
 	log.Printf("JWKS URL: %s", jwksURL)
 	log.Printf("Expected issuer: %s", issuer)
 	log.Printf("Expected audience: %s", audience)
-	log.Fatal(http.ListenAndServe(targetPort, nil))
+
+	// Start HTTPS listener in a goroutine
+	go func() {
+		// TLSConfig already has the cert; pass empty strings to use it
+		if err := httpsServer.ListenAndServeTLS("", ""); err != nil {
+			log.Fatalf("HTTPS server failed: %v", err)
+		}
+	}()
+
+	log.Fatal(http.ListenAndServe(httpPort, httpMux))
+}
+
+// generateSelfSignedCert creates an in-memory self-signed TLS certificate.
+func generateSelfSignedCert() (tls.Certificate, error) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("generate key: %w", err)
+	}
+
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("generate serial: %w", err)
+	}
+
+	template := x509.Certificate{
+		SerialNumber: serial,
+		Subject:      pkix.Name{CommonName: "demo-app"},
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(365 * 24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		DNSNames:     []string{"demo-app-service", "localhost"},
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, &template, &template, &key.PublicKey, key)
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("create certificate: %w", err)
+	}
+
+	return tls.Certificate{
+		Certificate: [][]byte{certDER},
+		PrivateKey:  key,
+	}, nil
 }
 
 func validateJWT(tokenString, jwksURL, expectedIssuer, expectedAudience string) error {

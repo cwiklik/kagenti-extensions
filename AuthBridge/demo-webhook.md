@@ -11,7 +11,7 @@ The kagenti-webhook watches for deployments with the `kagenti.io/inject: enabled
 | `proxy-init` | Init container that sets up iptables to redirect inbound and outbound traffic |
 | `spiffe-helper` | Fetches SPIFFE credentials from SPIRE (only with `kagenti.io/spire: enabled`) |
 | `kagenti-client-registration` | Registers the workload with Keycloak (using SPIFFE ID or static client ID) |
-| `envoy-proxy` | Intercepts inbound HTTP requests (JWT validation) and outbound requests (token exchange) |
+| `envoy-proxy` | Intercepts inbound HTTP requests (JWT validation) and outbound requests (HTTP: token exchange; HTTPS: TLS passthrough) |
 
 ## Architecture
 
@@ -33,9 +33,10 @@ The kagenti-webhook watches for deployments with the `kagenti.io/inject: enabled
 │  │    3. Returns 401 if invalid, forwards if valid              │   │
 │  │  Outbound (port 15123):                                     │   │
 │  │    1. Intercepts outbound traffic (via iptables OUTPUT)     │   │
-│  │    2. Extracts Bearer token from Authorization header       │   │
-│  │    3. Exchanges token via Keycloak (aud: auth-target)       │   │
-│  │    4. Replaces token in request                             │   │
+│  │    2. Detects protocol via tls_inspector                    │   │
+│  │    HTTP: Extracts Bearer token, exchanges via Keycloak,     │   │
+│  │          replaces token in request                          │   │
+│  │    HTTPS: Passes through as-is (TLS passthrough)            │   │
 │  └─────────────────────────────────────────────────────────────┘   │
 └────────────────────────────────────────────────────────────────────┘
                               │

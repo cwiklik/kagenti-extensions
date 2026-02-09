@@ -263,7 +263,8 @@ tail -f /dev/null
 }
 
 // BuildEnvoyProxyContainer creates the envoy-proxy sidecar container
-// This container intercepts inbound traffic (JWT validation) and outbound traffic (token exchange) via ext-proc
+// This container intercepts inbound traffic (JWT validation) and outbound HTTP traffic (token exchange) via ext-proc.
+// Outbound HTTPS traffic is passed through as-is via TLS passthrough (tcp_proxy).
 func BuildEnvoyProxyContainer() corev1.Container {
 	builderLog.Info("building EnvoyProxy Container")
 
@@ -386,8 +387,8 @@ func BuildEnvoyProxyContainer() corev1.Container {
 // SECURITY NOTE: This init container requires elevated privileges:
 //   - RunAsUser: 0 (root) - Required to modify network namespace iptables rules
 //   - RunAsNonRoot: false - Explicitly allows root execution
-//   - NET_ADMIN capability - Required to configure iptables rules for traffic redirection
-//   - NET_RAW capability - Required to create raw sockets for network operations
+//   - Privileged: true - Required for iptables manipulation and sysctl commands
+//     (e.g., sysctl -w net.ipv4.conf.all.route_localnet=1 for Istio Ambient Mesh coexistence)
 //
 // These privileges are necessary because iptables manipulation is a kernel-level
 // operation that requires root access. This is a common pattern used by service
@@ -441,12 +442,7 @@ func BuildProxyInitContainer() corev1.Container {
 		SecurityContext: &corev1.SecurityContext{
 			RunAsUser:    ptr.To(int64(0)),
 			RunAsNonRoot: ptr.To(false),
-			Capabilities: &corev1.Capabilities{
-				Add: []corev1.Capability{
-					"NET_ADMIN",
-					"NET_RAW",
-				},
-			},
+			Privileged:   ptr.To(true),
 		},
 	}
 }

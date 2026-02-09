@@ -66,7 +66,7 @@ flowchart TB
             subgraph Sidecar["AuthProxy Sidecar"]
                 authproxy["auth-proxy<br/>:8080"]
                 envoy["envoy-proxy<br/>:15123 (out) :15124 (in)"]
-                extproc["ext-proc<br/>(inbound: JWT validation)<br/>(outbound: token exchange)"]
+                extproc["ext-proc<br/>(inbound: JWT validation)<br/>(outbound HTTP: token exchange)<br/>(outbound HTTPS: TLS passthrough)"]
             end
         end
         

@@ -13,9 +13,9 @@ spec:
     metadata:
       labels:
         app: auth-proxy
-        istio.io/dataplane-mode: none
+        # istio.io/dataplane-mode: none
       annotations:
-        ambient.istio.io/redirection: disabled
+        # ambient.istio.io/redirection: disabled
         sidecar.istio.io/inject: "false"
     spec:
       initContainers:
@@ -23,10 +23,7 @@ spec:
         image: localhost/proxy-init:latest
         imagePullPolicy: IfNotPresent
         securityContext:
-          capabilities:
-            add:
-            - NET_ADMIN
-            - NET_RAW
+          privileged: true
           runAsNonRoot: false
           runAsUser: 0
         env:
@@ -53,6 +50,8 @@ spec:
         env:
         - name: TARGET_SERVICE_URL
           value: "http://demo-app-service:8081"
+        - name: TARGET_SERVICE_HTTPS_URL
+          value: "https://demo-app-service:8443"
         resources:
           limits:
             cpu: 500m
@@ -158,8 +157,23 @@ data:
         - name: envoy.filters.listener.original_dst
           typed_config:
             "@type": type.googleapis.com/envoy.extensions.filters.listener.original_dst.v3.OriginalDst
+        - name: envoy.filters.listener.tls_inspector
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.filters.listener.tls_inspector.v3.TlsInspector
         filter_chains:
-        - filters:
+        # TLS passthrough: forward HTTPS traffic as-is via TCP proxy
+        - filter_chain_match:
+            transport_protocol: tls
+          filters:
+          - name: envoy.filters.network.tcp_proxy
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy
+              stat_prefix: outbound_tls_passthrough
+              cluster: original_destination
+        # Plaintext HTTP: inspect and process via ext_proc
+        - filter_chain_match:
+            transport_protocol: raw_buffer
+          filters:
           - name: envoy.filters.network.http_connection_manager
             typed_config:
               "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
