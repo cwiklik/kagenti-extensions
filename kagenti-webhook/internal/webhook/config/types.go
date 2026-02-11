@@ -112,8 +112,23 @@ func (c *PlatformConfig) Validate() error {
 	if c.Proxy.Port < 1024 || c.Proxy.Port > 65535 {
 		return fmt.Errorf("proxy.port must be between 1024 and 65535")
 	}
+	if c.Proxy.InboundProxyPort < 1024 || c.Proxy.InboundProxyPort > 65535 {
+		return fmt.Errorf("proxy.inboundProxyPort must be between 1024 and 65535")
+	}
+	if c.Proxy.AdminPort < 1024 || c.Proxy.AdminPort > 65535 {
+		return fmt.Errorf("proxy.adminPort must be between 1024 and 65535")
+	}
 	if c.Images.EnvoyProxy == "" {
 		return fmt.Errorf("images.envoyProxy is required")
+	}
+	if c.Images.ProxyInit == "" {
+		return fmt.Errorf("images.proxyInit is required")
+	}
+	if c.Images.SpiffeHelper == "" {
+		return fmt.Errorf("images.spiffeHelper is required")
+	}
+	if c.Images.ClientRegistration == "" {
+		return fmt.Errorf("images.clientRegistration is required")
 	}
 	return nil
 }
