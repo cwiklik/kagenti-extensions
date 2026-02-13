@@ -19,8 +19,8 @@ package injector
 import (
 	"fmt"
 
+	"github.com/kagenti/kagenti-extensions/kagenti-webhook/internal/webhook/config"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/utils/ptr"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
@@ -32,38 +32,31 @@ const (
 	EnvoyProxyContainerName = "envoy-proxy"
 	ProxyInitContainerName  = "proxy-init"
 
-	// AuthBridge sidecar images from GitHub Container Registry
-	DefaultEnvoyImage     = "ghcr.io/kagenti/kagenti-extensions/envoy-with-processor:latest"
-	DefaultProxyInitImage = "ghcr.io/kagenti/kagenti-extensions/proxy-init:latest"
-
-	// Envoy proxy configuration
-	EnvoyProxyUID         = 1337
-	EnvoyProxyPort        = 15123
-	EnvoyInboundProxyPort = 15124
-
 	// Client registration container configuration
 	// Keep in sync with AuthBridge/client-registration/Dockerfile
 	ClientRegistrationUID = 1000
 	ClientRegistrationGID = 1000
 )
 
-func BuildSpiffeHelperContainer() corev1.Container {
+type ContainerBuilder struct {
+	cfg *config.PlatformConfig
+}
+
+func NewContainerBuilder(cfg *config.PlatformConfig) *ContainerBuilder {
+	if cfg == nil {
+		cfg = config.CompiledDefaults()
+	}
+	return &ContainerBuilder{cfg: cfg}
+}
+
+func (b *ContainerBuilder) BuildSpiffeHelperContainer() corev1.Container {
 	builderLog.Info("building SpiffeHelper Container")
 
 	return corev1.Container{
 		Name:            SpiffeHelperContainerName,
-		Image:           "ghcr.io/spiffe/spiffe-helper:nightly",
-		ImagePullPolicy: corev1.PullIfNotPresent,
-		Resources: corev1.ResourceRequirements{
-			Limits: corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse("100m"),
-				corev1.ResourceMemory: resource.MustParse("128Mi"),
-			},
-			Requests: corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse("50m"),
-				corev1.ResourceMemory: resource.MustParse("64Mi"),
-			},
-		},
+		Image:           b.cfg.Images.SpiffeHelper,
+		ImagePullPolicy: b.cfg.Images.PullPolicy,
+		Resources:       b.cfg.Resources.SpiffeHelper,
 		Command: []string{
 			"/spiffe-helper",
 			"-config=/etc/spiffe-helper/helper.conf",
@@ -90,14 +83,14 @@ func BuildSpiffeHelperContainer() corev1.Container {
 	}
 }
 
-func BuildClientRegistrationContainer(clientID, name, namespace string) corev1.Container {
+func (b *ContainerBuilder) BuildClientRegistrationContainer(clientID, name, namespace string) corev1.Container {
 	// Default to SPIRE enabled for backward compatibility
-	return BuildClientRegistrationContainerWithSpireOption(clientID, name, namespace, true)
+	return b.BuildClientRegistrationContainerWithSpireOption(clientID, name, namespace, true)
 }
 
 // BuildClientRegistrationContainerWithSpireOption creates the client registration container
 // with optional SPIRE support
-func BuildClientRegistrationContainerWithSpireOption(clientID, name, namespace string, spireEnabled bool) corev1.Container {
+func (b *ContainerBuilder) BuildClientRegistrationContainerWithSpireOption(clientID, name, namespace string, spireEnabled bool) corev1.Container {
 	builderLog.Info("building ClientRegistration Container", "spireEnabled", spireEnabled)
 
 	if clientID == "" {
@@ -235,18 +228,9 @@ tail -f /dev/null
 
 	return corev1.Container{
 		Name:            ClientRegistrationContainerName,
-		Image:           "ghcr.io/kagenti/kagenti-extensions/client-registration:latest",
-		ImagePullPolicy: corev1.PullIfNotPresent,
-		Resources: corev1.ResourceRequirements{
-			Limits: corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse("100m"),
-				corev1.ResourceMemory: resource.MustParse("128Mi"),
-			},
-			Requests: corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse("50m"),
-				corev1.ResourceMemory: resource.MustParse("64Mi"),
-			},
-		},
+		Image:           b.cfg.Images.ClientRegistration,
+		ImagePullPolicy: b.cfg.Images.PullPolicy,
+		Resources:       b.cfg.Resources.ClientRegistration,
 		Command: []string{
 			"/bin/sh",
 			"-c",
@@ -263,39 +247,29 @@ tail -f /dev/null
 }
 
 // BuildEnvoyProxyContainer creates the envoy-proxy sidecar container
-// This container intercepts inbound traffic (JWT validation) and outbound HTTP traffic (token exchange) via ext-proc.
-// Outbound HTTPS traffic is passed through as-is via TLS passthrough (tcp_proxy).
-func BuildEnvoyProxyContainer() corev1.Container {
+// This container intercepts inbound traffic (JWT validation) and outbound traffic (token exchange) via ext-proc
+func (b *ContainerBuilder) BuildEnvoyProxyContainer() corev1.Container {
 	builderLog.Info("building EnvoyProxy Container")
 
 	return corev1.Container{
 		Name:            EnvoyProxyContainerName,
-		Image:           DefaultEnvoyImage,
-		ImagePullPolicy: corev1.PullIfNotPresent,
-		Resources: corev1.ResourceRequirements{
-			Limits: corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse("200m"),
-				corev1.ResourceMemory: resource.MustParse("256Mi"),
-			},
-			Requests: corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse("50m"),
-				corev1.ResourceMemory: resource.MustParse("64Mi"),
-			},
-		},
+		Image:           b.cfg.Images.EnvoyProxy,
+		ImagePullPolicy: b.cfg.Images.PullPolicy,
+		Resources:       b.cfg.Resources.EnvoyProxy,
 		Ports: []corev1.ContainerPort{
 			{
 				Name:          "envoy-outbound",
-				ContainerPort: EnvoyProxyPort,
+				ContainerPort: b.cfg.Proxy.Port,
 				Protocol:      corev1.ProtocolTCP,
 			},
 			{
 				Name:          "envoy-inbound",
-				ContainerPort: EnvoyInboundProxyPort,
+				ContainerPort: b.cfg.Proxy.InboundProxyPort,
 				Protocol:      corev1.ProtocolTCP,
 			},
 			{
 				Name:          "envoy-admin",
-				ContainerPort: 9901,
+				ContainerPort: b.cfg.Proxy.AdminPort,
 				Protocol:      corev1.ProtocolTCP,
 			},
 			{
@@ -363,8 +337,8 @@ func BuildEnvoyProxyContainer() corev1.Container {
 			},
 		},
 		SecurityContext: &corev1.SecurityContext{
-			RunAsUser:  ptr.To(int64(EnvoyProxyUID)),
-			RunAsGroup: ptr.To(int64(EnvoyProxyUID)),
+			RunAsUser:  ptr.To(b.cfg.Proxy.UID),
+			RunAsGroup: ptr.To(b.cfg.Proxy.UID),
 		},
 		VolumeMounts: []corev1.VolumeMount{
 			{
@@ -387,8 +361,8 @@ func BuildEnvoyProxyContainer() corev1.Container {
 // SECURITY NOTE: This init container requires elevated privileges:
 //   - RunAsUser: 0 (root) - Required to modify network namespace iptables rules
 //   - RunAsNonRoot: false - Explicitly allows root execution
-//   - Privileged: true - Required for iptables manipulation and sysctl commands
-//     (e.g., sysctl -w net.ipv4.conf.all.route_localnet=1 for Istio Ambient Mesh coexistence)
+//   - NET_ADMIN capability - Required to configure iptables rules for traffic redirection
+//   - NET_RAW capability - Required to create raw sockets for network operations
 //
 // These privileges are necessary because iptables manipulation is a kernel-level
 // operation that requires root access. This is a common pattern used by service
@@ -404,35 +378,26 @@ func BuildEnvoyProxyContainer() corev1.Container {
 // Alternative approaches (not currently implemented):
 //   - CNI plugin: Configure iptables at pod network setup time (requires cluster-level changes)
 //   - Istio CNI: Similar approach used by Istio to avoid privileged init containers
-func BuildProxyInitContainer() corev1.Container {
+func (b *ContainerBuilder) BuildProxyInitContainer() corev1.Container {
 	builderLog.Info("building ProxyInit Container")
 
 	return corev1.Container{
 		Name:            ProxyInitContainerName,
-		Image:           DefaultProxyInitImage,
-		ImagePullPolicy: corev1.PullIfNotPresent,
-		Resources: corev1.ResourceRequirements{
-			Limits: corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse("10m"),
-				corev1.ResourceMemory: resource.MustParse("10Mi"),
-			},
-			Requests: corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse("10m"),
-				corev1.ResourceMemory: resource.MustParse("10Mi"),
-			},
-		},
+		Image:           b.cfg.Images.ProxyInit,
+		ImagePullPolicy: b.cfg.Images.PullPolicy,
+		Resources:       b.cfg.Resources.ProxyInit,
 		Env: []corev1.EnvVar{
 			{
 				Name:  "PROXY_PORT",
-				Value: fmt.Sprintf("%d", EnvoyProxyPort),
+				Value: fmt.Sprintf("%d", b.cfg.Proxy.Port),
 			},
 			{
 				Name:  "INBOUND_PROXY_PORT",
-				Value: fmt.Sprintf("%d", EnvoyInboundProxyPort),
+				Value: fmt.Sprintf("%d", b.cfg.Proxy.InboundProxyPort),
 			},
 			{
 				Name:  "PROXY_UID",
-				Value: fmt.Sprintf("%d", EnvoyProxyUID),
+				Value: fmt.Sprintf("%d", b.cfg.Proxy.UID),
 			},
 			{
 				Name:  "OUTBOUND_PORTS_EXCLUDE",
@@ -442,7 +407,32 @@ func BuildProxyInitContainer() corev1.Container {
 		SecurityContext: &corev1.SecurityContext{
 			RunAsUser:    ptr.To(int64(0)),
 			RunAsNonRoot: ptr.To(false),
-			Privileged:   ptr.To(true),
+			Capabilities: &corev1.Capabilities{
+				Add: []corev1.Capability{
+					"NET_ADMIN",
+					"NET_RAW",
+				},
+			},
 		},
 	}
+}
+
+// Backward-compatible package-level wrappers using compiled defaults.
+// These are called by PodMutator and will be removed in Phase 4
+// when PodMutator is rewired to use ContainerBuilder directly.
+
+func BuildSpiffeHelperContainer() corev1.Container {
+	return NewContainerBuilder(nil).BuildSpiffeHelperContainer()
+}
+
+func BuildClientRegistrationContainerWithSpireOption(clientID, name, namespace string, spireEnabled bool) corev1.Container {
+	return NewContainerBuilder(nil).BuildClientRegistrationContainerWithSpireOption(clientID, name, namespace, spireEnabled)
+}
+
+func BuildEnvoyProxyContainer() corev1.Container {
+	return NewContainerBuilder(nil).BuildEnvoyProxyContainer()
+}
+
+func BuildProxyInitContainer() corev1.Container {
+	return NewContainerBuilder(nil).BuildProxyInitContainer()
 }
