@@ -161,13 +161,13 @@ Target Gamma:
 authorized
 
 === AuthBridge Token Exchange Logs ===
-[Resolver] Host "target-alpha-service" matched "target-alpha-service*"
+[Resolver] Host "target-alpha-service" matched "target-alpha-service**"
 [Resolver] Using route target_audience: target-alpha
 [Token Exchange] Successfully exchanged token, replacing Authorization header
-[Resolver] Host "target-beta-service" matched "target-beta-service*"
+[Resolver] Host "target-beta-service" matched "target-beta-service**"
 [Resolver] Using route target_audience: target-beta
 [Token Exchange] Successfully exchanged token, replacing Authorization header
-[Resolver] Host "target-gamma-service" matched "target-gamma-service*"
+[Resolver] Host "target-gamma-service" matched "target-gamma-service**"
 [Resolver] Using route target_audience: target-gamma
 [Token Exchange] Successfully exchanged token, replacing Authorization header
 ```
@@ -197,17 +197,17 @@ both short hostnames and FQDNs:
 
 ```yaml
 # Target Alpha - matches both short name and FQDN
-- host: "target-alpha-service*"
+- host: "target-alpha-service**"
   target_audience: "target-alpha"
   token_scopes: "openid target-alpha-aud"
 
 # Target Beta - matches both short name and FQDN
-- host: "target-beta-service*"
+- host: "target-beta-service**"
   target_audience: "target-beta"
   token_scopes: "openid target-beta-aud"
 
 # Target Gamma - matches both short name and FQDN
-- host: "target-gamma-service*"
+- host: "target-gamma-service**"
   target_audience: "target-gamma"
   token_scopes: "openid target-gamma-aud"
 ```

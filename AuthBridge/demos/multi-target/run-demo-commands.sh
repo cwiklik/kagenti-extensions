@@ -1,7 +1,7 @@
+#!/usr/bin/env bash
 ##
 # Run the commands outlined after initial setup and deployment in `demo.md`
 #
-#!/usr/bin/env bash
 
 set -eu
 
