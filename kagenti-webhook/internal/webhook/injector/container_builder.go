@@ -90,19 +90,17 @@ func BuildSpiffeHelperContainer() corev1.Container {
 	}
 }
 
-func BuildClientRegistrationContainer(clientID, name, namespace string) corev1.Container {
+func BuildClientRegistrationContainer(name, namespace string) corev1.Container {
 	// Default to SPIRE enabled for backward compatibility
-	return BuildClientRegistrationContainerWithSpireOption(clientID, name, namespace, true)
+	return BuildClientRegistrationContainerWithSpireOption(name, namespace, true)
 }
 
 // BuildClientRegistrationContainerWithSpireOption creates the client registration container
 // with optional SPIRE support
-func BuildClientRegistrationContainerWithSpireOption(clientID, name, namespace string, spireEnabled bool) corev1.Container {
+func BuildClientRegistrationContainerWithSpireOption(name, namespace string, spireEnabled bool) corev1.Container {
 	builderLog.Info("building ClientRegistration Container", "spireEnabled", spireEnabled)
 
-	if clientID == "" {
-		clientID = namespace + "/" + name
-	}
+	clientName := namespace + "/" + name
 
 	// Base environment variables
 	env := []corev1.EnvVar{
@@ -157,7 +155,7 @@ func BuildClientRegistrationContainerWithSpireOption(clientID, name, namespace s
 		},
 		{
 			Name:  "CLIENT_NAME",
-			Value: clientID,
+			Value: clientName,
 		},
 		{
 			Name:  "SECRET_FILE_PATH",
