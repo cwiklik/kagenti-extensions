@@ -1,0 +1,767 @@
+# GitHub Issue Agent Demo with AuthBridge (UI Deployment)
+
+This guide walks through deploying the **GitHub Issue Agent** with **AuthBridge**
+using the **Kagenti UI** for agent and tool deployment. Infrastructure setup
+(webhook, Keycloak, ConfigMaps) is done via CLI, while the agent and tool are
+imported and deployed through the Kagenti dashboard.
+
+For a fully manual deployment using only `kubectl`, see [demo-manual.md](demo-manual.md).
+
+This demo extends the [upstream GitHub Issue Agent demo](https://github.com/kagenti/kagenti/blob/main/docs/demos/demo-github-issue.md)
+by replacing manual token handling with AuthBridge's automatic token exchange.
+
+## What This Demo Shows
+
+In this demo, we deploy the GitHub Issue Agent and GitHub MCP Tool with AuthBridge
+providing end-to-end security:
+
+1. **Agent identity** — The agent automatically registers with Keycloak using its
+   SPIFFE ID, with no hardcoded secrets
+2. **Inbound validation** — Requests to the agent are validated (JWT signature,
+   issuer, and audience) before reaching the agent code
+3. **Transparent token exchange** — When the agent calls the GitHub tool, AuthBridge
+   automatically exchanges the user's token for one scoped to the tool
+4. **Subject preservation** — The end user's identity (`sub` claim) is preserved
+   through the exchange, enabling per-user authorization at the tool
+5. **Scope-based access** — The tool uses token scopes to determine whether to
+   grant public or privileged GitHub API access
+
+## Architecture
+
+```
+┌──────────────────────────────────────────────────────────────────────────────────┐
+│                              KUBERNETES CLUSTER                                  │
+│                                                                                  │
+│  ┌───────────────────────────────────────────────────────────────────────────┐   │
+│  │                  GIT-ISSUE-AGENT POD (namespace: team1)                   │   │
+│  │                                                                           │   │
+│  │  ┌─────────────────┐  ┌─────────────┐  ┌──────────────────────────────┐   │   │
+│  │  │ git-issue-agent │  │   spiffe-   │  │      client-registration     │   │   │
+│  │  │  (A2A agent,    │  │   helper    │  │  (registers with Keycloak    │   │   │
+│  │  │   port 8000)    │  │             │  │   using SPIFFE ID)           │   │   │
+│  │  └─────────────────┘  └─────────────┘  └──────────────────────────────┘   │   │
+│  │                                                                           │   │
+│  │  ┌───────────────────────────────────────────────────────────────────┐    │   │
+│  │  │                AuthProxy Sidecar (envoy-proxy container)          │    │   │
+│  │  │  Envoy + ext_proc (go-processor)                                  │    │   │
+│  │  │  Inbound (port 15124):                                            │    │   │
+│  │  │    - Validates JWT (signature + issuer + audience via JWKS)       │    │   │
+│  │  │    - Returns 401 Unauthorized for invalid/missing tokens          │    │   │
+│  │  │  Outbound (port 15123):                                           │    │   │
+│  │  │    - HTTP: Exchanges token via Keycloak → aud: github-tool        │    │   │
+│  │  │    - HTTPS: TLS passthrough (no interception)                     │    │   │
+│  │  └───────────────────────────────────────────────────────────────────┘    │   │
+│  └───────────────────────────────────────────────────────────────────────────┘   │
+│                                      │                                           │
+│                      Exchanged token │(aud: github-tool)                         │
+│                                      ▼                                           │
+│  ┌───────────────────────────────────────────────────────────────────────────┐   │
+│  │                  GITHUB-TOOL POD (namespace: team1)                       │   │
+│  │                                                                           │   │
+│  │  ┌──────────────────────────────────────────────────────────────────┐     │   │
+│  │  │                     github-tool (port 9090)                      │     │   │
+│  │  │  - Validates token (aud: github-tool, issuer: Keycloak)          │     │   │
+│  │  │  - Token has github-full-access scope? → PRIVILEGED_ACCESS_PAT   │     │   │
+│  │  │  - Otherwise → PUBLIC_ACCESS_PAT                                 │     │   │
+│  │  └──────────────────────────────────────────────────────────────────┘     │   │
+│  └───────────────────────────────────────────────────────────────────────────┘   │
+│                                                                                  │
+├──────────────────────────────────────────────────────────────────────────────────┤
+│                            EXTERNAL SERVICES                                     │
+│                                                                                  │
+│  ┌──────────────────────┐          ┌──────────────────────┐                      │
+│  │   SPIRE (namespace:  │          │ KEYCLOAK (namespace: │                      │
+│  │       spire)         │          │     keycloak)        │                      │
+│  │                      │          │                      │                      │
+│  │  Provides SPIFFE     │          │  - demo realm        │                      │
+│  │  identities (SVIDs)  │          │  - token exchange    │                      │
+│  └──────────────────────┘          └──────────────────────┘                      │
+└──────────────────────────────────────────────────────────────────────────────────┘
+```
+
+## Key Security Properties
+
+| Property | How It's Achieved |
+|----------|-------------------|
+| **No hardcoded agent secrets** | Client credentials dynamically generated by client-registration using SPIFFE ID |
+| **Identity-based auth** | SPIFFE ID is both the pod identity and the Keycloak client ID |
+| **Inbound validation** | [AuthProxy](../../AuthProxy/README.md) validates all incoming requests (JWT signature, issuer, audience) before they reach the agent |
+| **Audience-scoped tokens** | Original token scoped to Agent; exchanged token scoped to GitHub tool |
+| **User attribution** | `sub` and `preferred_username` preserved through token exchange |
+| **Scope-based authorization** | Tool uses token scopes to determine access level (public vs. privileged) |
+| **Transparent to agent code** | The agent makes plain HTTP calls; AuthBridge handles all token management |
+
+### Inbound Verification (AuthProxy)
+
+The AuthBridge sidecar includes [AuthProxy](../../AuthProxy/README.md), an Envoy-based
+ext_proc that validates **every** inbound request before it reaches the agent. The
+ext_proc (port 9090) performs three checks on the `Authorization: Bearer <token>` header:
+
+1. **Signature** — Verifies the JWT signature against Keycloak's JWKS keys
+   (auto-refreshed via cache). Rejects tampered or forged tokens.
+2. **Issuer** — Confirms the `iss` claim matches the expected Keycloak realm
+   (`ISSUER` in `authbridge-config`). Rejects tokens from other identity providers.
+3. **Audience** — If `EXPECTED_AUDIENCE` is set, confirms the `aud` claim includes
+   the agent's SPIFFE ID. Rejects tokens intended for a different service.
+
+Requests that fail any check receive an immediate `401 Unauthorized` response from
+Envoy — the agent application never sees them. This is tested in
+[Step 8a–8b](#step-8-test-via-cli-optional).
+
+---
+
+## Prerequisites
+
+Ensure you have completed the Kagenti platform setup as described in the
+[Installation Guide](https://github.com/kagenti/kagenti/blob/main/docs/install.md),
+including the Kagenti UI.
+
+You should also have:
+- The [kagenti-extensions](https://github.com/kagenti/kagenti-extensions) repo cloned
+- The Kagenti UI running at `http://kagenti-ui.localtest.me:8080`
+- Python 3.9+ with `venv` support
+- **Ollama running** with the `ibm/granite4:latest` model (or another model of your choice)
+- Two GitHub Personal Access Tokens (PATs):
+  - `<PUBLIC_ACCESS_PAT>` — access to public repositories only
+  - `<PRIVILEGED_ACCESS_PAT>` — access to all repositories
+
+See the [upstream demo](https://github.com/kagenti/kagenti/blob/main/docs/demos/demo-github-issue.md#required-github-pat-tokens) for instructions on creating GitHub PAT tokens.
+
+---
+
+## Step 1: Configure Keycloak
+
+Keycloak needs to be configured with the correct clients, scopes, and users for the
+token exchange flow between the agent and the GitHub tool.
+
+### Port-forward Keycloak (if needed)
+
+The setup script connects to Keycloak at `http://keycloak.localtest.me:8080`.
+If Keycloak is not already reachable at that address (e.g., via an ingress),
+start a port-forward in a separate terminal:
+
+```bash
+kubectl port-forward service/keycloak-service -n keycloak 8080:8080
+```
+
+### Run the setup script
+
+```bash
+cd AuthBridge
+
+# Create virtual environment (if not already done)
+python -m venv venv
+source venv/bin/activate
+pip install --upgrade pip
+pip install -r requirements.txt
+
+# Run the Keycloak setup for this demo
+python demos/github-issue/setup_keycloak.py
+```
+
+This creates:
+
+| Resource | Name | Purpose |
+|----------|------|---------|
+| **Realm** | `demo` | Keycloak realm for the demo |
+| **Client** | `github-tool` | Target audience for token exchange |
+| **Scope** | `agent-team1-git-issue-agent-aud` | Realm DEFAULT — auto-adds Agent's SPIFFE ID to all tokens |
+| **Scope** | `github-tool-aud` | Realm OPTIONAL — for exchanged tokens targeting the tool |
+| **Scope** | `github-full-access` | Realm OPTIONAL — for privileged GitHub API access |
+| **User** | `alice` (password: `alice123`) | Regular user — public access |
+| **User** | `bob` (password: `bob123`) | Privileged user — full access |
+
+---
+
+## Step 2: Apply ConfigMaps
+
+> **Critical: Apply ConfigMaps BEFORE importing the agent in the UI.** The agent pod
+> reads ConfigMap values at startup. If the agent starts before the ConfigMaps are
+> correct, the client will be registered in the wrong Keycloak realm.
+
+```bash
+cd AuthBridge
+
+# Apply the GitHub Issue demo ConfigMaps
+kubectl apply -f demos/github-issue/k8s/configmaps.yaml
+```
+
+Verify:
+
+```bash
+kubectl get configmap environments -n team1 -o jsonpath='{.data.KEYCLOAK_REALM}'
+# Expected: demo
+```
+
+---
+
+## Step 3: Import the GitHub Tool via Kagenti UI
+
+1. Navigate to [Import New Tool](http://kagenti-ui.localtest.me:8080/Import_New_Tool#import-new-tool)
+   in the Kagenti UI.
+
+2. Select namespace: `team1`
+
+3. Select **Build from source** as the deployment method.
+
+4. Under **Select Environment Variable Sets**, click `Import .env File` and provide:
+   - **GitHub Repository URL:** `https://github.com/kagenti/agent-examples/`
+   - **Path to .env file:** `mcp/github_tool/.env.template`
+   - Click **Import** — this populates the environment variables.
+
+5. **Update the imported environment variables** with your tokens and Keycloak settings:
+
+   | Variable | Value |
+   |----------|-------|
+   | `INIT_AUTH_HEADER` | `Bearer <PRIVILEGED_ACCESS_PAT>` |
+   | `UPSTREAM_HEADER_TO_USE_IF_IN_AUDIENCE` | `Bearer <PRIVILEGED_ACCESS_PAT>` |
+   | `UPSTREAM_HEADER_TO_USE_IF_NOT_IN_AUDIENCE` | `Bearer <PUBLIC_ACCESS_PAT>` |
+   | `ISSUER` | `http://keycloak.localtest.me:8080/realms/demo` |
+   | `JWKS_URL` | `http://keycloak-service.keycloak.svc.cluster.local:8080/realms/demo/protocol/openid-connect/certs` |
+   | `AUDIENCE` | `github-tool` |
+
+6. Under **Tool Kubernetes Pod Configuration**, set **Target Port** to `9090`.
+
+7. Use the source repository: `https://github.com/kagenti/agent-examples`
+
+8. Choose the `main` branch.
+
+9. Set **Select Protocol** to `streamable-http`.
+
+10. Under **Specify Source Subfolder**, select: `mcp/github_tool`
+
+11. Click **Build & Deploy New Tool**.
+
+You will be redirected to a **Build Progress** page where you can monitor the
+Shipwright build. Wait for it to complete.
+
+> **Note:** If the build fails with `short-name resolution enforced`, the Dockerfiles
+> in the `agent-examples` repo need fully qualified image names. See
+> [PR #125](https://github.com/kagenti/agent-examples/pull/125) for the fix.
+> As a workaround, use the branch `fix/dockerfile-fqdn-image-names` instead of `main`.
+
+---
+
+## Step 4: Import the GitHub Issue Agent via Kagenti UI
+
+1. Navigate to [Import New Agent](http://kagenti-ui.localtest.me:8080/Import_New_Agent#import-new-agent)
+   in the Kagenti UI.
+
+2. In the **Select Namespace to Deploy Agent** drop-down, choose `team1`.
+
+3. Under **Select Environment Variable Sets**, select the LLM provider:
+   - `ollama` for local LLM, or `openai` for OpenAI
+
+4. Click `Import .env File` and provide:
+   - **GitHub Repository URL:** `https://github.com/kagenti/agent-examples/`
+   - **Path to .env file:**
+     - For Ollama: `a2a/git_issue_agent/.env.ollama`
+     - For OpenAI: `a2a/git_issue_agent/.env.openai`
+   - Click **Import** — this populates the agent's environment variables.
+
+5. **Add/update the following environment variables** for AuthBridge integration:
+
+   | Variable | Value | Purpose |
+   |----------|-------|---------|
+   | `MCP_URL` | `http://github-tool-service:9090/mcp` | GitHub tool endpoint |
+   | `JWKS_URI` | `http://keycloak-service.keycloak.svc:8080/realms/demo/protocol/openid-connect/certs` | Token validation |
+
+   If using OpenAI, also ensure these are set:
+
+   | Variable | Value |
+   |----------|-------|
+   | `LLM_API_KEY` | Your OpenAI API key (or reference `openai-secret`) |
+   | `OPENAI_API_KEY` | Same as `LLM_API_KEY` |
+
+6. In the **Deployment Method** select `Build from Source`.
+
+7. For **Agent Source Repository URL**, use: `https://github.com/kagenti/agent-examples`
+
+8. For **Git Branch or Tag**, use `main`.
+
+9. In **Container Registry Configuration**, select the default, then set **Protocol** to `a2a`.
+
+10. Under **Specify Source Subfolder**, click `Select from examples` and choose:
+    `a2a/git_issue_agent`
+
+11. Click **Build & Deploy New Agent**.
+
+Wait for the Shipwright build to complete and the deployment to become ready.
+
+---
+
+## Step 5: Verify the Deployment
+
+### Check pod status
+
+```bash
+kubectl get pods -n team1
+```
+
+Expected output:
+
+```
+NAME                               READY   STATUS    RESTARTS   AGE
+git-issue-agent-58768bdb67-xxxxx   4/4     Running   0          2m
+github-tool-7f8c9d6b44-yyyyy      1/1     Running   0          5m
+```
+
+> **Note:** The agent pod should show **4/4** containers — the agent itself plus
+> three AuthBridge sidecars (spiffe-helper, kagenti-client-registration, envoy-proxy)
+> injected by the webhook.
+
+### Verify injected containers
+
+```bash
+kubectl get pod -n team1 -l app=git-issue-agent -o jsonpath='{.items[0].spec.containers[*].name}'
+```
+
+Expected:
+
+```
+agent spiffe-helper kagenti-client-registration envoy-proxy
+```
+
+> **Note:** When deployed via the Kagenti UI, the main container is named `agent`
+> (not `git-issue-agent` as in the manual deployment).
+
+### Check client registration
+
+```bash
+kubectl logs deployment/git-issue-agent -n team1 -c kagenti-client-registration
+```
+
+Expected:
+
+```
+SPIFFE credentials ready!
+Client ID (SPIFFE ID): spiffe://localtest.me/ns/team1/sa/git-issue-agent
+Created Keycloak client "spiffe://localtest.me/ns/team1/sa/git-issue-agent"
+Client registration complete!
+```
+
+### Check agent logs
+
+```bash
+kubectl logs deployment/git-issue-agent -n team1 -c agent
+```
+
+Expected:
+
+```
+INFO:     Started server process [17]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+```
+
+### Check the service endpoint
+
+The Kagenti UI creates the service with its own naming convention:
+
+```bash
+kubectl get svc -n team1 | grep git-issue-agent
+```
+
+Expected (UI-created service):
+
+```
+git-issue-agent   ClusterIP   10.96.x.x   <none>   8080/TCP   5m
+```
+
+The UI maps **port 8080** to the agent's internal port 8000.
+
+---
+
+## Step 6: Verify Ollama is Running
+
+The agent uses an LLM for inference. If using Ollama, verify it is running:
+
+```bash
+ollama list
+```
+
+You should see `ibm/granite4:latest` (or whichever model you configured) on the list.
+If Ollama is not running, start it in a separate terminal (`ollama serve`) and ensure the
+model is pulled (`ollama pull ibm/granite4:latest`).
+
+---
+
+## Step 7: Chat via Kagenti UI
+
+This is the primary way to interact with the agent when using the UI deployment.
+
+1. Navigate to the **Agent Catalog** in the Kagenti UI.
+2. Select the `team1` namespace.
+3. Under **Available Agents**, select `git-issue-agent` and click **View Details**.
+4. In the chat input, type:
+
+   ```
+   List issues in kagenti/kagenti repo
+   ```
+
+5. The agent will process the request with full AuthBridge security:
+   - Your UI token is validated on inbound by AuthBridge
+   - The token is exchanged for the GitHub tool's audience
+   - The tool accesses GitHub with the appropriate PAT based on your scopes
+
+---
+
+## Step 8: Test via CLI (Optional)
+
+You can also test the AuthBridge flow from the command line to verify inbound
+validation and token exchange.
+
+> **Note:** The Kagenti UI creates services with different names/ports than the manual
+> deployment. Verify the actual service name and port before testing:
+>
+> ```bash
+> kubectl get svc -n team1 | grep git-issue-agent
+> ```
+>
+> The UI typically creates `git-issue-agent:8080`. The commands below use this convention.
+> If your service is named differently, adjust accordingly.
+
+### Setup
+
+```bash
+# Start a test client pod
+kubectl run test-client --image=nicolaka/netshoot -n team1 --restart=Never -- sleep 3600
+kubectl wait --for=condition=ready pod/test-client -n team1 --timeout=30s
+```
+
+### 8a. Inbound Rejection - No Token
+
+```bash
+kubectl exec test-client -n team1 -- curl -s \
+  http://git-issue-agent:8080/.well-known/agent.json
+# Expected: {"error":"unauthorized","message":"missing Authorization header"}
+```
+
+### 8b. Inbound Rejection - Invalid Token (Signature Check)
+
+A malformed or tampered token fails the JWKS signature check:
+
+```bash
+kubectl exec test-client -n team1 -- curl -s \
+  -H "Authorization: Bearer invalid-token" \
+  http://git-issue-agent:8080/.well-known/agent.json
+# Expected: {"error":"unauthorized","message":"token validation failed: failed to parse/validate token: ..."}
+```
+
+### 8c. End-to-End Test with Valid Token
+
+Open a shell inside the test-client pod to avoid JWT shell expansion issues:
+
+```bash
+kubectl exec -it test-client -n team1 -- sh
+```
+
+Inside the pod, get credentials and send a request:
+
+```bash
+# Get a Keycloak admin token
+ADMIN_TOKEN=$(curl -s http://keycloak-service.keycloak.svc:8080/realms/master/protocol/openid-connect/token \
+  -d "grant_type=password" \
+  -d "client_id=admin-cli" \
+  -d "username=admin" \
+  -d "password=admin" | jq -r ".access_token")
+
+echo "Admin token length: ${#ADMIN_TOKEN}"
+
+# Look up the agent's client in the demo realm.
+# The client ID is the SPIFFE ID (URL-encoded in the query parameter).
+SPIFFE_ID="spiffe://localtest.me/ns/team1/sa/git-issue-agent"
+CLIENTS=$(curl -s -H "Authorization: Bearer $ADMIN_TOKEN" \
+  "http://keycloak-service.keycloak.svc:8080/admin/realms/demo/clients" \
+  --data-urlencode "clientId=$SPIFFE_ID" --get)
+INTERNAL_ID=$(echo "$CLIENTS" | jq -r ".[0].id")
+CLIENT_ID=$(echo "$CLIENTS" | jq -r ".[0].clientId")
+
+echo "Internal ID:   $INTERNAL_ID"
+echo "Client ID:     $CLIENT_ID"
+
+# Get the client secret
+CLIENT_SECRET=$(curl -s -H "Authorization: Bearer $ADMIN_TOKEN" \
+  "http://keycloak-service.keycloak.svc:8080/admin/realms/demo/clients/$INTERNAL_ID/client-secret" | jq -r ".value")
+
+echo "Secret length: ${#CLIENT_SECRET}"
+
+# Get an OAuth token for the agent
+TOKEN=$(curl -s -X POST \
+  "http://keycloak-service.keycloak.svc:8080/realms/demo/protocol/openid-connect/token" \
+  -d "grant_type=client_credentials" \
+  --data-urlencode "client_id=$CLIENT_ID" \
+  --data-urlencode "client_secret=$CLIENT_SECRET" | jq -r ".access_token")
+
+echo "Token length:  ${#TOKEN}"
+
+# Send a prompt to the agent (A2A v0.3.0)
+curl -s --max-time 300 \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -X POST http://git-issue-agent:8080/ \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": "test-1",
+    "method": "message/send",
+    "params": {
+      "message": {
+        "role": "user",
+        "messageId": "msg-001",
+        "parts": [{"type": "text", "text": "List issues in kagenti/kagenti repo"}]
+      }
+    }
+  }' | jq
+```
+
+Exit the pod when done:
+
+```bash
+exit
+```
+
+### 8d. Verify AuthProxy Logs (Inbound + Outbound)
+
+Check the ext_proc logs to confirm both inbound validation and outbound token
+exchange are working:
+
+**Inbound validation logs:**
+
+```bash
+kubectl logs deployment/git-issue-agent -n team1 -c envoy-proxy 2>&1 | grep "\[Inbound\]"
+```
+
+Expected:
+
+```
+[Inbound] Token validated - issuer: http://keycloak.localtest.me:8080/realms/demo, audience: [spiffe://localtest.me/ns/team1/sa/git-issue-agent ...]
+[Inbound] JWT validation succeeded, forwarding request
+```
+
+**Outbound token exchange logs:**
+
+```bash
+kubectl logs deployment/git-issue-agent -n team1 -c envoy-proxy 2>&1 | grep "^2026/" | grep "\[Token Exchange\]"
+```
+
+Expected:
+
+```
+[Token Exchange] Token URL: http://keycloak-service.keycloak.svc:8080/realms/demo/protocol/openid-connect/token
+[Token Exchange] Client ID: spiffe://localtest.me/ns/team1/sa/git-issue-agent
+[Token Exchange] Audience: github-tool
+[Token Exchange] Scopes: openid github-tool-aud github-full-access
+[Token Exchange] Successfully exchanged token
+[Token Exchange] Successfully exchanged token, replacing Authorization header
+```
+
+### Clean Up Test Client
+
+```bash
+kubectl delete pod test-client -n team1 --ignore-not-found
+```
+
+---
+
+## Patching Agent Environment (If Needed)
+
+If the agent is missing environment variables after UI deployment (e.g., `MCP_URL`,
+`JWKS_URI`, or LLM keys), you can patch the deployment:
+
+```bash
+# Set missing env vars on the agent container
+kubectl set env deployment/git-issue-agent -n team1 -c agent \
+  MCP_URL="http://github-tool-service:9090/mcp" \
+  JWKS_URI="http://keycloak-service.keycloak.svc:8080/realms/demo/protocol/openid-connect/certs"
+
+# If using OpenAI and the key is in a secret:
+kubectl patch deployment git-issue-agent -n team1 --type=json -p='[
+  {"op":"add","path":"/spec/template/spec/containers/0/env/-","value":{
+    "name":"LLM_API_KEY",
+    "valueFrom":{"secretKeyRef":{"name":"openai-secret","key":"apikey"}}
+  }},
+  {"op":"add","path":"/spec/template/spec/containers/0/env/-","value":{
+    "name":"OPENAI_API_KEY",
+    "valueFrom":{"secretKeyRef":{"name":"openai-secret","key":"apikey"}}
+  }}
+]'
+
+# Wait for rollout
+kubectl rollout status deployment/git-issue-agent -n team1 --timeout=180s
+```
+
+---
+
+## How AuthBridge Changes the Original Demo
+
+| Aspect | Original Demo | With AuthBridge |
+|--------|--------------|-----------------|
+| **Agent secrets** | Manual PAT token configuration | Dynamic credentials via SPIFFE + client-registration |
+| **Inbound auth** | No validation | [AuthProxy](../../AuthProxy/README.md) validates JWT (signature, issuer, audience) via ext_proc |
+| **Token management** | Agent code handles tokens | Transparent sidecar — agent code unchanged |
+| **Token for tool** | Same PAT token passed through | OAuth token exchange (RFC 8693) |
+| **User attribution** | No user tracking | `sub` claim preserved through exchange |
+| **Access control** | Single PAT for all users | Scope-based: public vs. privileged |
+
+---
+
+## Troubleshooting
+
+### Invalid Client or Invalid Client Credentials
+
+**Symptom:** `{"error":"invalid_client","error_description":"Invalid client or Invalid client credentials"}`
+
+**Cause:** The client was registered in the wrong Keycloak realm (typically `master`
+instead of `demo`). This happens when the `environments` ConfigMap is updated **after**
+the agent pod has already started. This is especially common with UI deployments where
+the Kagenti Helm chart may have pre-existing ConfigMaps.
+
+**Fix:**
+
+```bash
+# 1. Verify ConfigMap is correct
+kubectl get configmap environments -n team1 -o jsonpath='{.data.KEYCLOAK_REALM}'
+# Should show: demo
+
+# 2. If wrong, re-apply ConfigMaps and restart
+kubectl apply -f demos/github-issue/k8s/configmaps.yaml
+kubectl rollout restart deployment/git-issue-agent -n team1
+```
+
+### Build Fails: "short-name resolution enforced"
+
+**Symptom:** Shipwright build fails with `Error: creating build container: short-name resolution enforced but cannot prompt without a TTY`
+
+**Cause:** Podman/Buildah requires fully qualified image names (e.g., `docker.io/library/golang:...`)
+but the Dockerfiles use short names.
+
+**Fix:** Use the branch `fix/dockerfile-fqdn-image-names` instead of `main` when importing,
+or wait for [PR #125](https://github.com/kagenti/agent-examples/pull/125) to be merged.
+
+### Agent Missing Environment Variables
+
+**Symptom:** Agent returns `JWKS_URI or GITHUB_TOKEN env var must be set` or similar
+
+**Cause:** The UI deployment didn't include all required environment variables.
+
+**Fix:** See the [Patching Agent Environment](#patching-agent-environment-if-needed) section above.
+
+### Service Name Mismatch
+
+**Symptom:** `Couldn't resolve host` when trying to reach the agent
+
+**Cause:** The Kagenti UI creates services with different names/ports than the manual
+deployment YAML.
+
+**Fix:** Check the actual service:
+
+```bash
+kubectl get svc -n team1 | grep git-issue-agent
+```
+
+The UI typically creates `git-issue-agent:8080`. The manual deployment creates
+`git-issue-agent-service:8000`.
+
+### Upstream Request Timeout
+
+**Symptom:** `upstream request timeout` from Envoy
+
+**Cause:** The LLM inference takes longer than the Envoy route timeout.
+
+**Fix:** The `envoy-config` ConfigMap sets the route timeout to 300 seconds (5 min).
+If you still hit timeouts, check that the ConfigMap was applied correctly:
+
+```bash
+kubectl get configmap envoy-config -n team1 -o jsonpath='{.data.envoy\.yaml}' | grep "timeout:"
+```
+
+If you see `30s` values instead of `300s`, re-apply the ConfigMaps and restart:
+
+```bash
+kubectl apply -f demos/github-issue/k8s/configmaps.yaml
+kubectl rollout restart deployment/git-issue-agent -n team1
+```
+
+### Agent Pod Not Starting (4/4 containers)
+
+**Symptom:** Pod shows 3/4 or less containers ready
+
+**Fix:** Check each container's logs:
+
+```bash
+kubectl logs deployment/git-issue-agent -n team1 -c kagenti-client-registration
+kubectl logs deployment/git-issue-agent -n team1 -c spiffe-helper
+kubectl logs deployment/git-issue-agent -n team1 -c envoy-proxy
+kubectl logs deployment/git-issue-agent -n team1 -c agent
+```
+
+### GitHub Tool Returns 401
+
+**Symptom:** Tool rejects the exchanged token
+
+**Fix:** Verify the tool's environment variables match the Keycloak configuration:
+- `ISSUER` should be `http://keycloak.localtest.me:8080/realms/demo`
+- `AUDIENCE` should be `github-tool`
+
+---
+
+## Cleanup
+
+### Via Kagenti UI
+
+1. Go to the **Agent Catalog**, find `git-issue-agent`, and click **Delete**.
+2. Go to the **Tool Catalog**, find `github-tool`, and click **Delete**.
+
+### Via CLI
+
+```bash
+kubectl delete deployment git-issue-agent -n team1
+kubectl delete deployment github-tool -n team1
+kubectl delete svc git-issue-agent -n team1
+kubectl delete svc github-tool-service -n team1
+kubectl delete secret github-tool-secrets -n team1
+kubectl delete pod test-client -n team1 --ignore-not-found
+```
+
+### Delete ConfigMaps
+
+```bash
+kubectl delete -f demos/github-issue/k8s/configmaps.yaml
+```
+
+### Delete Namespace (removes everything)
+
+```bash
+kubectl delete namespace team1
+```
+
+### Remove Webhook (optional)
+
+```bash
+kubectl delete mutatingwebhookconfiguration kagenti-webhook-authbridge-mutating-webhook-configuration
+```
+
+---
+
+## Files Reference
+
+| File | Description |
+|------|-------------|
+| `demos/github-issue/demo-ui.md` | This guide |
+| `demos/github-issue/demo-manual.md` | Fully manual deployment guide |
+| `demos/github-issue/setup_keycloak.py` | Keycloak configuration script |
+| `demos/github-issue/k8s/configmaps.yaml` | ConfigMaps for AuthBridge sidecars |
+| `demos/github-issue/k8s/git-issue-agent-deployment.yaml` | Agent deployment YAML (manual only) |
+| `demos/github-issue/k8s/github-tool-deployment.yaml` | GitHub tool deployment YAML (manual only) |
+
+## Next Steps
+
+- **Manual Deployment**: See [demo-manual.md](demo-manual.md) for deploying everything via `kubectl`
+- **AuthProxy Details**: See the [AuthProxy README](../../AuthProxy/README.md) for inbound
+  JWT validation and outbound token exchange internals
+- **Multi-Target Demo**: See the [multi-target demo](../multi-target/demo.md) for
+  route-based token exchange to multiple tool services
+- **Access Policies**: See the [access policies proposal](../../PROPOSAL-access-policies.md)
+  for role-based delegation control
+- **AuthBridge Overview**: See the [AuthBridge README](../../README.md) for architecture details

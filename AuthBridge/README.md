@@ -324,6 +324,7 @@ The easiest way to get all prerequisites is to use the [Kagenti Ansible installe
 - **[Webhook Demo](./demos/webhook/README.md)** - Shows how to use the kagenti-webhook to automatically inject AuthBridge sidecars into your deployments (recommended starting point)
 - **[GitHub Issue Agent Demo](./demos/github-issue/demo.md)** - End-to-end demo with the real GitHub Issue Agent and GitHub MCP Tool, showing transparent token exchange via AuthBridge
   - [Manual deployment](./demos/github-issue/demo-manual.md) — deploy everything via `kubectl` and YAML manifests
+  - [UI deployment](./demos/github-issue/demo-ui.md) — import agent and tool via the Kagenti dashboard
 - **[Single-Target Demo](./demos/single-target/demo.md)** - Basic token exchange to one target service (manual deployment)
 - **[Multi-Target Demo](./demos/multi-target/demo.md)** - Route-based token exchange to multiple targets
 

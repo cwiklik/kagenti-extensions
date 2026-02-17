@@ -12,7 +12,7 @@ by replacing manual token handling with AuthBridge's automatic token exchange.
 | Guide | Description | Best For |
 |-------|-------------|----------|
 | **[Manual Deployment](demo-manual.md)** | Deploy everything via `kubectl` and YAML manifests | Full control, debugging, understanding internals |
-| **UI Deployment** *(coming soon)* | Import agent and tool via the Kagenti dashboard | Quick start, UI-driven workflow |
+| **[UI Deployment](demo-ui.md)** | Import agent and tool via the Kagenti dashboard | Quick start, UI-driven workflow |
 
 Both guides share the same infrastructure setup (webhook, Keycloak, ConfigMaps) and
 produce identical AuthBridge security behavior.
@@ -60,6 +60,7 @@ The agent pod includes four containers:
 | File | Description |
 |------|-------------|
 | [demo-manual.md](demo-manual.md) | Full manual deployment guide |
+| [demo-ui.md](demo-ui.md) | UI-driven deployment guide |
 | [setup_keycloak.py](setup_keycloak.py) | Keycloak configuration script |
 | [k8s/configmaps.yaml](k8s/configmaps.yaml) | ConfigMaps for AuthBridge sidecars |
 | [k8s/git-issue-agent-deployment.yaml](k8s/git-issue-agent-deployment.yaml) | Agent deployment YAML (manual) |
