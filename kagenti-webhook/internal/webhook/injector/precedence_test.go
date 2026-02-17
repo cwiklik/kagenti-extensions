@@ -391,31 +391,34 @@ func TestPrecedenceEvaluator(t *testing.T) {
 			expectClientReg: true,
 		},
 
-		// === SPIRE label requirement tests (spiffe-helper only) ===
+		// === SPIRE label opt-out tests (spiffe-helper only) ===
 		{
-			name:            "SPIRE label missing - spiffe-helper skipped",
+			// No SPIRE label: spiffe-helper is injected by default (opt-out model).
+			name:            "SPIRE label missing - spiffe-helper injected",
 			featureGates:    allEnabledGates(),
 			platformConfig:  allEnabledConfig(),
 			namespaceLabels: optedInNamespace(),
 			workloadLabels:  noLabels(),
 			expectEnvoy:     true,
 			expectProxyInit: true,
-			expectSpiffe:    false,
+			expectSpiffe:    true,
 			expectClientReg: true,
 		},
 		{
-			name:            "SPIRE label wrong value - spiffe-helper skipped",
+			// kagenti.io/spire=disabled is the explicit opt-out mechanism.
+			name:            "SPIRE label disabled - spiffe-helper skipped",
 			featureGates:    allEnabledGates(),
 			platformConfig:  allEnabledConfig(),
 			namespaceLabels: optedInNamespace(),
-			workloadLabels:  map[string]string{SpireEnableLabel: "disabled"},
+			workloadLabels:  map[string]string{SpireEnableLabel: SpireDisabledValue},
 			expectEnvoy:     true,
 			expectProxyInit: true,
 			expectSpiffe:    false,
 			expectClientReg: true,
 		},
 		{
-			name:            "SPIRE enabled - spiffe-helper injected",
+			// Only kagenti.io/spire=disabled blocks; any other value (incl. "enabled") does not.
+			name:            "SPIRE label set to non-disabled value - spiffe-helper injected",
 			featureGates:    allEnabledGates(),
 			platformConfig:  allEnabledConfig(),
 			namespaceLabels: optedInNamespace(),
@@ -426,7 +429,7 @@ func TestPrecedenceEvaluator(t *testing.T) {
 			expectClientReg: true,
 		},
 		{
-			name: "SPIRE enabled but precedence chain blocks - spiffe-helper still skipped",
+			name: "SPIRE label absent but precedence chain blocks - spiffe-helper still skipped",
 			featureGates: &config.FeatureGates{
 				GlobalEnabled:      true,
 				EnvoyProxy:         true,
@@ -435,7 +438,7 @@ func TestPrecedenceEvaluator(t *testing.T) {
 			},
 			platformConfig:  allEnabledConfig(),
 			namespaceLabels: optedInNamespace(),
-			workloadLabels:  spireEnabled(),
+			workloadLabels:  noLabels(),
 			expectEnvoy:     true,
 			expectProxyInit: true,
 			expectSpiffe:    false,

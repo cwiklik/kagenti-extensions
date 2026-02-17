@@ -118,28 +118,56 @@ fi
 echo ""
 
 # Step 1: Build and load image
-echo "[1/4] Building Docker image..."
+echo "[1/6] Building Docker image..."
 docker build -f Dockerfile . --tag "${IMAGE_NAME}" --load
 
 echo ""
-echo "[2/4] Loading image into kind cluster..."
+echo "[2/6] Loading image into kind cluster..."
 if ! kind load docker-image --name "${CLUSTER}" "${IMAGE_NAME}" 2>/dev/null; then
     echo "kind load failed, using docker save workaround..."
     docker save "${IMAGE_NAME}" | docker exec -i "${CLUSTER}-control-plane" ctr --namespace k8s.io images import -
 fi
 
-# Step 2: Update deployment
+# Steps 3-5: Deploy ConfigMaps and update deployment
+CHART_DIR="${SCRIPT_DIR}/../../charts/kagenti-webhook"
+
 echo ""
-echo "[3/4] Updating deployment..."
+echo "[3/6] Deploying platform defaults ConfigMap..."
+helm template kagenti-webhook "${CHART_DIR}" \
+  --set namespaceOverride="${NAMESPACE}" \
+  --show-only templates/configmap-platform-defaults.yaml | kubectl apply -f -
+
+echo ""
+echo "[4/6] Deploying feature gates ConfigMap..."
+helm template kagenti-webhook "${CHART_DIR}" \
+  --set namespaceOverride="${NAMESPACE}" \
+  --show-only templates/configmap-feature-gates.yaml | kubectl apply -f -
+
+echo ""
+echo "[5/6] Updating deployment (image + config volumes)..."
+# Update the container image
 kubectl -n "${NAMESPACE}" set image deployment/kagenti-webhook-controller-manager "manager=${IMAGE_NAME}"
+
+# Patch the deployment to add volumes and volumeMounts if missing.
+# Each volume is patched independently so that adding a new volume
+# is not blocked by an already-existing one from a previous run.
+kubectl -n "${NAMESPACE}" patch deployment kagenti-webhook-controller-manager --type=json -p='[
+  {"op": "add", "path": "/spec/template/spec/volumes/-", "value": {"name": "platform-config", "configMap": {"name": "kagenti-webhook-defaults"}}},
+  {"op": "add", "path": "/spec/template/spec/containers/0/volumeMounts/-", "value": {"name": "platform-config", "mountPath": "/etc/kagenti", "readOnly": true}}
+]' 2>/dev/null || echo "  platform-config volume patch already applied or not needed"
+
+kubectl -n "${NAMESPACE}" patch deployment kagenti-webhook-controller-manager --type=json -p='[
+  {"op": "add", "path": "/spec/template/spec/volumes/-", "value": {"name": "feature-gates", "configMap": {"name": "kagenti-webhook-feature-gates"}}},
+  {"op": "add", "path": "/spec/template/spec/containers/0/volumeMounts/-", "value": {"name": "feature-gates", "mountPath": "/etc/kagenti/feature-gates", "readOnly": true}}
+]' 2>/dev/null || echo "  feature-gates volume patch already applied or not needed"
 
 echo ""
 echo "Waiting for rollout to complete..."
 kubectl rollout status -n "${NAMESPACE}" deployment/kagenti-webhook-controller-manager --timeout=120s
 
-# Step 3: Deploy authbridge webhook if it doesn't exist
+# Step 6: Deploy authbridge webhook if it doesn't exist
 echo ""
-echo "[4/4] Ensuring authbridge webhook configuration exists..."
+echo "[6/6] Ensuring authbridge webhook configuration exists..."
 if kubectl get mutatingwebhookconfigurations kagenti-webhook-authbridge-mutating-webhook-configuration &>/dev/null; then
     echo "Authbridge webhook already exists, skipping..."
 else

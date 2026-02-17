@@ -45,6 +45,8 @@ spec:
         {{- if .Values.webhook.enableClientRegistration }}
         - --enable-client-registration=true
         {{- end }}
+        - --config-path=/etc/kagenti/config.yaml
+        - --feature-gates-path=/etc/kagenti/feature-gates/feature-gates.yaml
         ports:
         - containerPort: {{ .Values.webhook.port }}
           name: webhook-server
@@ -61,8 +63,20 @@ spec:
         - mountPath: {{ .Values.webhook.certPath }}
           name: webhook-certs
           readOnly: true
+        - name: platform-config
+          mountPath: /etc/kagenti
+          readOnly: true
+        - name: feature-gates
+          mountPath: /etc/kagenti/feature-gates
+          readOnly: true
       volumes:
       - name: webhook-certs
         secret:
           secretName: {{ include "kagenti-webhook.fullname" . }}-webhook-server-cert
+      - name: platform-config
+        configMap:
+          name: {{ include "kagenti-webhook.fullname" . }}-defaults
+      - name: feature-gates
+        configMap:
+          name: {{ include "kagenti-webhook.fullname" . }}-feature-gates
       terminationGracePeriodSeconds: 10

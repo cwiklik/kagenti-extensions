@@ -181,7 +181,7 @@ func (m *PodMutator) InjectAuthBridge(ctx context.Context, podSpec *corev1.PodSp
 		return false, nil
 	}
 
-	spireEnabled := IsSpireEnabled(labels)
+	spireEnabled := decision.SpiffeHelper.Inject
 
 	// Initialize slices
 	if podSpec.Containers == nil {
