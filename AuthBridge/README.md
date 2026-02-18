@@ -19,40 +19,50 @@ AuthBridge solves the challenge of **secure service-to-service authentication** 
 ## Architecture
 
 ```
-┌────────────────────────────────────────────────────────────────────────┐
-│                          WORKLOAD POD                                  │
-│                    (with AuthBridge sidecars)                          │
-│                                                                        │
-│  ┌─────────────────────────────────────────────────────────────────┐   │
-│  │  Init Container: proxy-init (iptables setup)                    │   │
-│  └─────────────────────────────────────────────────────────────────┘   │
-│                                                                        │
-│  ┌─────────────────────────────────────────────────────────────────┐   │
-│  │                      Containers                                 │   │
-│  │  ┌──────────────┐  ┌─────────────────┐  ┌────────────────────┐  │   │
-│  │  │  Your App    │  │  SPIFFE Helper  │  │      AuthProxy     │  │   │
-│  │  │              │  │  (provides      │  │  (Envoy + Ext Proc │  │   │
-│  │  │              │  │   SPIFFE creds) │  │  = token exchange) │  │   │
-│  │  └──────┬───────┘  └─────────────────┘  └──────────┬─────────┘  │   │
-│  │                                                                 │   │
-│  │  ┌───────────────────────────────────────────────────────────┐  │   │
-│  │  │ client-registration (registers Workload with Keycloak)    │  │   │
-│  │  └───────────────────────────────────────────────────────────┘  │   │
-│  └─────────┼───────────────────────────────────────────┼───────────┘   │
-│            │ Caller's token (aud: SPIFFE ID)           │               │
-│            └───────────────────────────────────────────┘               │
-│                              │                                         │
-└──────────────────────────────┼─────────────────────────────────────────┘
-                               │ Token exchanged for target-service audience
-                               │ (using Workload's own credentials)
-                               ▼
-                    ┌─────────────────────┐
-                    │  TARGET SERVICE POD │
-                    │                     │
-                    │  Validates token    │
-                    │  with audience      │
-                    │  "target-service"   │
-                    └─────────────────────┘
+                  Incoming request (with JWT)
+                        │
+                        ▼
+┌───────────────────────────────────────────────────────────────────────┐
+│                         WORKLOAD POD                                  │
+│                   (with AuthBridge sidecars)                          │
+│                                                                       │
+│  ┌─────────────────────────────────────────────────────────────────┐  │
+│  │  Init Container: proxy-init (iptables intercepts pod traffic,   │  │
+│  │  excluding Keycloak port)                                       │  │
+│  └─────────────────────────────────────────────────────────────────┘  │
+│                        │                                              │
+│                        ▼                                              │
+│  ┌─────────────────────────────────────────────────────────────────┐  │
+│  │                   AuthProxy Sidecar                             │  │
+│  │                 (Envoy + Ext Proc)                              │  │
+│  │                                                                 │  │
+│  │  INBOUND:  Validates JWT (signature + issuer via JWKS)          │  │
+│  │            Returns 401 Unauthorized if invalid                  │  │
+│  │  OUTBOUND: Exchanges token → target-service audience            │  │
+│  │            (using Workload's credentials)                       │  │
+│  └──────────────────────┬──────────────────────────────────────────┘  │
+│            ▲ outbound   │ inbound                                     │
+│            │ request    │ (validated)                                 │
+│            │            ▼                                             │
+│  ┌─────────┴────────────────────┐  ┌───────────────────────────────┐  │
+│  │         Your App             │  │  SPIFFE Helper                │  │
+│  │                              │  │  (provides SPIFFE creds)      │  │
+│  └──────────────────────────────┘  └───────────────────────────────┘  │
+│                                                                       │
+│  ┌─────────────────────────────────────────────────────────────────┐  │
+│  │  client-registration (registers Workload with Keycloak)         │  │
+│  └─────────────────────────────────────────────────────────────────┘  │
+└───────────────────────────────────────────────────────────────────────┘
+                        │
+                        │ Exchanged token (aud: target-service)
+                        ▼
+              ┌─────────────────────┐
+              │  TARGET SERVICE POD │
+              │                     │
+              │  Validates token    │
+              │  with audience      │
+              │  "target-service"   │
+              └─────────────────────┘
 ```
 
 <details>
@@ -91,13 +101,17 @@ flowchart TB
     SpiffeHelper --> ClientReg
     ClientReg --> Keycloak
     Caller -->|"1. Get token"| Keycloak
-    Caller -->|"2. Pass token"| App
-    App -->|"3. Request + Token"| Envoy
-    Envoy --> ExtProc
-    ExtProc -->|"4. Token Exchange"| Keycloak
-    Envoy -->|"5. Request + Exchanged Token"| Target
-    Target -->|"6. Response"| App
-    App -->|"7. Response"| Caller
+    Caller -->|"2. Pass token"| Envoy
+    Envoy -->|"3. Validate JWT (JWKS)"| ExtProc
+    ExtProc -->|"3a. Validation result"| Envoy
+    Envoy -->|"4. 401 if invalid"| Caller
+    Envoy -->|"5. Forward if valid"| App
+    App -->|"6. Request + Token"| Envoy
+    Envoy -->|"7. Token Exchange"| ExtProc
+    ExtProc -->|"8. Exchange with Keycloak"| Keycloak
+    Envoy -->|"9. Request + Exchanged Token"| Target
+    Target -->|"10. Response"| App
+    App -->|"11. Response"| Caller
 
     style WorkloadPod fill:#e1f5fe
     style TargetPod fill:#e8f5e9
@@ -110,15 +124,15 @@ flowchart TB
 
 ## Components
 
-### Workload Pod (AuthBridge Sidecars)
+### Workload Pod
 
-| Container | Type | Purpose |
+| Component | Type | Purpose |
 |-----------|------|---------|
 | `proxy-init` | init | Sets up iptables to intercept inbound and outbound traffic (excludes Keycloak port) |
 | `client-registration` | container | Registers workload with Keycloak using SPIFFE ID, saves credentials to `/shared/` |
 | `spiffe-helper` | container | Provides SPIFFE credentials (SVID) |
-| `auth-proxy` | container | Pass-through proxy (JWT validation handled by Ext Proc on inbound path) |
-| `envoy-proxy` | container | Intercepts inbound traffic (JWT validation) and outbound traffic (HTTP: token exchange via Ext Proc; HTTPS: TLS passthrough) |
+| `Your App` | container | Your application; the demo uses a pass-through proxy as an example |
+| `AuthProxy Sidecar` | container | Composed of Envoy + external processing (`Ext Proc`) components (shown as separate nodes in diagrams): validates inbound JWTs (signature + issuer via JWKS, returns 401 if invalid) and exchanges outbound tokens (HTTP: token exchange via Ext Proc; HTTPS: TLS passthrough) |
 
 ### Target Service Pod
 
@@ -157,22 +171,35 @@ Any downstream service that validates incoming tokens have the expected audience
     │  3. Pass token      │                        │               │
     │  to Workload        │                        │               │
     │────────────────────►│                        │               │
+    │                     │──────────┐             │               │
+    │                     │  Envoy intercepts      │               │
+    │                     │  inbound request       │               │
+    │                     │          │             │               │
+    │                     │  Ext Proc validates    │               │
+    │                     │  JWT (signature +      │               │
+    │                     │  issuer via JWKS)      │               │
+    │                     │          │             │               │
+    │                     │  401 if invalid ──────►│ (rejected)    │
+    │                     │          │             │               │
+    │                     │  4. Forward to App     │               │
+    │                     │  if valid              │               │
+    │                     │◄─────────┘             │               │
     │                     │                        │               │
-    │                     │  4. Workload calls     │               │
+    │                     │  5. Workload calls     │               │
     │                     │  Target Service with   │               │
     │                     │  Caller's token        │               │
     │                     │──────────┐             │               │
     │                     │          │             │               │
-    │                     │  AuthProxy intercepts  │               │
-    │                     │  validates aud         │               │
+    │                     │  Envoy intercepts      │               │
+    │                     │  outbound request      │               │
     │                     │          │             │               │
-    │                     │  5. Token Exchange     │               │
+    │                     │  6. Token Exchange     │               │
     │                     │  (using Workload creds)│               │
     │                     │───────────────────────►│               │
     │                     │◄───────────────────────│               │
     │                     │  New token (aud: target-service)       │
     │                     │          │             │               │
-    │                     │  6. Forward request    │               │
+    │                     │  7. Forward request    │               │
     │                     │  with exchanged token  │               │
     │                     │───────────────────────────────────────►│
     │                     │                        │               │
@@ -189,10 +216,10 @@ Any downstream service that validates incoming tokens have the expected audience
 | 0 | SPIFFE Helper | SVID obtained from SPIRE Agent |
 | 1 | Client Registration | Workload registered with Keycloak (client_id = SPIFFE ID) |
 | 2 | Caller | Token obtained with `aud: Workload's SPIFFE ID` |
-| 3 | Workload | Token received from Caller |
-| 4 | AuthProxy | Token validated (aud matches Workload's identity) |
-| 5 | Ext Proc | Token exchanged using Workload's credentials → `aud: target-service` |
-| 6 | Target Service | Token validated, returns `"authorized"` |
+| 3 | Envoy + Ext Proc (inbound) | Inbound JWT validated: signature verified via JWKS, issuer checked, optional audience check. Returns 401 if invalid. |
+| 4 | Workload | Validated request forwarded to application |
+| 5 | Envoy + Ext Proc (outbound) | Outbound request intercepted; token exchanged using Workload's credentials → `aud: target-service` |
+| 6 | Target Service | Token validated (`aud: target-service`), returns `"authorized"` |
 
 ## Detailed End-to-End Flow
 
@@ -220,15 +247,23 @@ sequenceDiagram
     Note over Caller,Target: Runtime Flow
     Caller->>KC: Get token (aud: Workload's SPIFFE ID)
     KC-->>Caller: Token with workload-aud scope
-    
-    Caller->>App: Pass token
+
+    Note over Caller,Envoy: Inbound Path (JWT Validation)
+    Caller->>Envoy: Request with Bearer token
+    Note over Envoy: Ext Proc validates JWT:<br/>signature (JWKS), issuer,<br/>optional audience check
+    alt Invalid token
+        Envoy-->>Caller: 401 Unauthorized
+    end
+    Envoy->>App: Forward validated request
+
+    Note over App,Envoy: Outbound Path (Token Exchange)
     App->>Envoy: Call Target Service with Caller's token
-    
-    Note over Envoy: AuthProxy intercepts<br/>Validates aud = Workload's ID<br/>Uses Workload's credentials
-    
+
+    Note over Envoy: Ext Proc intercepts outbound<br/>Uses Workload's credentials
+
     Envoy->>KC: Token Exchange (Workload's creds)
     KC-->>Envoy: New Token (aud: target-service)
-    
+
     Envoy->>Target: Request + Exchanged Token
     Target->>Target: Validate token (aud: target-service)
     Target-->>App: "authorized"
@@ -244,17 +279,20 @@ sequenceDiagram
 | 2 | SPIFFE Helper → Client Registration | Pass JWT with SPIFFE ID |
 | 3 | Client Registration → Keycloak | Register client (`client_id` = SPIFFE ID) |
 | 4 | Keycloak → Client Registration | Return client credentials (saved to `/shared/`) |
-| **Runtime Phase** |||
+| **Runtime Phase — Inbound (JWT Validation)** |||
 | 5 | Caller → Keycloak | Request token (`aud`: Workload's SPIFFE ID) |
 | 6 | Keycloak → Caller | Return token with workload-aud scope |
-| 7 | Caller → Workload | Pass token to Workload |
-| 8 | Workload → AuthProxy | Call Target Service with Caller's token |
-| 9 | AuthProxy → Keycloak | Token Exchange (using Workload's credentials) |
-| 10 | Keycloak → AuthProxy | Return new token (`aud`: target-service) |
-| 11 | AuthProxy → Target Service | Forward request with exchanged token |
-| 12 | Target Service | Validate token (`aud`: target-service) |
-| 13 | Target Service → Workload | Return "authorized" |
-| 14 | Workload → Caller | Return response |
+| 7 | Caller → Envoy (inbound) | Request intercepted by iptables, routed to Envoy inbound listener |
+| 8 | Envoy → Ext Proc | Validate JWT: signature (JWKS), issuer, optional audience. Returns 401 if invalid. |
+| 9 | Envoy → Workload | Forward validated request to application |
+| **Runtime Phase — Outbound (Token Exchange)** |||
+| 10 | Workload → Envoy (outbound) | Outbound request intercepted by iptables, routed to Envoy outbound listener |
+| 11 | Envoy → Ext Proc → Keycloak | Token Exchange (using Workload's credentials) |
+| 12 | Keycloak → Envoy | Return new token (`aud`: target-service) |
+| 13 | Envoy → Target Service | Forward request with exchanged token |
+| 14 | Target Service | Validate token (`aud`: target-service) |
+| 15 | Target Service → Workload | Return "authorized" |
+| 16 | Workload → Caller | Return response |
 
 </details>
 
@@ -262,9 +300,10 @@ sequenceDiagram
 
 - **No Static Secrets** - Credentials are dynamically generated during registration
 - **Short-Lived Tokens** - JWT tokens expire and must be refreshed
+- **Inbound JWT Validation** - Incoming requests are validated at the sidecar (signature via JWKS, issuer, optional audience) before reaching the application
 - **Self-Audience Scoping** - Tokens include the Workload's own identity as audience, enabling token exchange
 - **Same Identity for Exchange** - AuthProxy uses the Workload's credentials (same SPIFFE ID), matching the token's audience
-- **Transparent to Application** - Token exchange is handled by the sidecar; applications don't need to implement it
+- **Transparent to Application** - Both inbound validation and outbound token exchange are handled by the sidecar; applications don't need to implement either
 - **Configurable Targets** - Route-based configuration maps destination hosts to target audiences
 
 ## Prerequisites
