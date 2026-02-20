@@ -99,9 +99,9 @@ graph LR
     style APP fill:#87CEEB
 ```
 
-### Without SPIRE Integration
+### AuthBridge Webhook - Without SPIRE Integration (opt-out)
 
-When `kagenti.io/spire` label is **not** set (default):
+When `kagenti.io/spire: disabled` is set on the workload:
 
 ```mermaid
 graph LR
@@ -133,9 +133,10 @@ graph TD
 
     subgraph "AuthBridge Path (Recommended)"
         WORKLOAD[Standard Workload<br/>Deploy/STS/DS/Job]
+        CHECK_KAGENTI_TYPE{kagenti.io/type:<br/>agent or tool?}
         CHECK_NS_AB{Namespace has<br/>kagenti-enabled=true?}
-        CHECK_LABEL{Pod has<br/>kagenti.io/inject=enabled}
-        INJECT_FULL[Inject all sidecars<br/>per precedence chain<br/>proxy-init, envoy-proxy,<br/>spiffe-helper, client-registration]
+        PRECEDENCE[7-Layer Precedence Evaluator<br/>L1: global feature gate<br/>L2: per-sidecar feature gate<br/>L3: namespace label<br/>L4: workload labels<br/>L5: TokenExchange CR<br/>L6: platform defaults<br/>L7: kagenti.io/spire=disabled opts out spiffe-helper]
+        INJECT_FULL[Inject sidecars per decision<br/>proxy-init, envoy-proxy,<br/>spiffe-helper, client-registration]
     end
 
     subgraph "Legacy Path (Deprecated)"
@@ -151,13 +152,12 @@ graph TD
     CHECK_TYPE -->|Workload| WORKLOAD
     CHECK_TYPE -->|CR| CUSTOM
 
-    WORKLOAD --> CHECK_NS_AB
-    CHECK_NS_AB -->|Yes| CHECK_LABEL
+    WORKLOAD --> CHECK_KAGENTI_TYPE
+    CHECK_KAGENTI_TYPE -->|Yes| CHECK_NS_AB
+    CHECK_KAGENTI_TYPE -->|No| SKIP
+    CHECK_NS_AB -->|Yes| PRECEDENCE
     CHECK_NS_AB -->|No| SKIP
-    CHECK_LABEL -->|true| INJECT_FULL
-    CHECK_LABEL -->|false| SKIP
-    CHECK_LABEL -->|not set & ns=true| INJECT_FULL
-    CHECK_LABEL -->|not set & ns=false| SKIP
+    PRECEDENCE --> INJECT_FULL
 
     CUSTOM --> CHECK_NS_LEG
     CHECK_NS_LEG -->|Yes| CHECK_ANNO

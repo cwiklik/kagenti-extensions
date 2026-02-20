@@ -138,20 +138,20 @@ deploy_no_type() {
     sleep 2
 
     info "Deploying ${name} (no kagenti.io/type label)..."
-    kubectl apply -n "${DEMO_NS}" -f - <<'INNEREOF' >/dev/null
+    kubectl apply -n "${DEMO_NS}" -f - <<INNEREOF >/dev/null
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: DEPLOY_NAME_PLACEHOLDER
+  name: ${name}
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: DEPLOY_NAME_PLACEHOLDER
+      app: ${name}
   template:
     metadata:
       labels:
-        app: DEPLOY_NAME_PLACEHOLDER
+        app: ${name}
     spec:
       containers:
       - name: app
@@ -422,35 +422,11 @@ run_scenarios() {
 
     info "Namespace label: kagenti-enabled=true (restored)"
 
-    # Special deployment without kagenti.io/type
     local deploy_name="demo-s5"
-    kubectl delete deployment -n "${DEMO_NS}" "${deploy_name}" --ignore-not-found >/dev/null 2>&1
-    sleep 2
-    info "Deploying ${deploy_name} (no kagenti.io/type label)..."
-    kubectl apply -n "${DEMO_NS}" -f - <<EOF >/dev/null
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: ${deploy_name}
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: ${deploy_name}
-  template:
-    metadata:
-      labels:
-        app: ${deploy_name}
-    spec:
-      containers:
-      - name: app
-        image: busybox:1.36
-        command: ["sleep", "3600"]
-EOF
-    sleep "${WAIT_SECS}"
+    deploy_no_type "${deploy_name}"
 
-    CONT=$(get_containers demo-s5)
-    INIT=$(get_init_containers demo-s5)
+    CONT=$(get_containers "${deploy_name}")
+    INIT=$(get_init_containers "${deploy_name}")
     info "Containers:      ${CONT}"
     info "Init containers: ${INIT}"
     printf "\n"
@@ -464,7 +440,7 @@ EOF
 
     if $ok; then pass "$T"; else fail "$T"; fi
     RESULT_NUMS+=($S); RESULT_TITLES+=("$T"); RESULT_STATUS+=("$( $ok && echo PASS || echo FAIL )")
-    cleanup_deploy demo-s5
+    cleanup_deploy "${deploy_name}"
 
     read -rp "  Press Enter for next scenario..."
 

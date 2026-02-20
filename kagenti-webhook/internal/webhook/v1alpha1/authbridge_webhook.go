@@ -167,9 +167,9 @@ func (w *AuthBridgeWebhook) Handle(ctx context.Context, req admission.Request) a
 }
 
 func (w *AuthBridgeWebhook) isAlreadyInjected(podSpec *corev1.PodSpec) bool {
-	// Check sidecar containers (envoy-proxy is always injected by the AuthBridge path,
-	// so it serves as a reliable marker even when spiffe-helper and client-registration
-	// are both disabled via their respective flags)
+	// Check sidecar containers. Any one of these being present means the full
+	// injection cycle already ran for this pod (each Build* call is guarded by
+	// containerExists/volumeExists checks for idempotency).
 	for _, container := range podSpec.Containers {
 		if container.Name == injector.EnvoyProxyContainerName ||
 			container.Name == injector.SpiffeHelperContainerName ||
