@@ -193,9 +193,7 @@ graph TD
         WORKLOAD[Standard Workload<br/>Deploy/STS/DS/Job]
         CHECK_NS_AB{Namespace has<br/>kagenti-enabled=true?}
         CHECK_LABEL{Pod has<br/>kagenti.io/inject=enabled}
-        CHECK_SPIRE{Pod has<br/>kagenti.io/spire: enabled?}
-        INJECT_FULL[Inject: proxy-init<br/>envoy-proxy, spiffe-helper<br/>client-registration]
-        INJECT_BASIC[Inject: proxy-init<br/>envoy-proxy only]
+        INJECT_FULL[Inject all sidecars<br/>per precedence chain<br/>proxy-init, envoy-proxy,<br/>spiffe-helper, client-registration]
     end
 
     subgraph "Legacy Path (Deprecated)"
@@ -213,14 +211,11 @@ graph TD
 
     WORKLOAD --> CHECK_NS_AB
     CHECK_NS_AB -->|Yes| CHECK_LABEL
-    CHECK_NS_AB -->|No| CHECK_LABEL
-    CHECK_LABEL -->|true| CHECK_SPIRE
+    CHECK_NS_AB -->|No| SKIP
+    CHECK_LABEL -->|true| INJECT_FULL
     CHECK_LABEL -->|false| SKIP
-    CHECK_LABEL -->|not set & ns=true| CHECK_SPIRE
+    CHECK_LABEL -->|not set & ns=true| INJECT_FULL
     CHECK_LABEL -->|not set & ns=false| SKIP
-
-    CHECK_SPIRE -->|Yes| INJECT_FULL
-    CHECK_SPIRE -->|No| INJECT_BASIC
 
     CUSTOM --> CHECK_NS_LEG
     CHECK_NS_LEG -->|Yes| CHECK_ANNO
@@ -231,7 +226,6 @@ graph TD
     CHECK_ANNO -->|not set & ns=false| SKIP
 
     style INJECT_FULL fill:#32CD32
-    style INJECT_BASIC fill:#4169E1
     style INJECT_SPIRE fill:#D3D3D3,stroke:#808080,stroke-dasharray: 5 5
     style WORKLOAD fill:#87CEEB
     style CUSTOM fill:#D3D3D3,stroke:#808080,stroke-dasharray: 5 5
@@ -243,11 +237,11 @@ graph TD
 |--------|--------------------------|---------------------|
 | **Resources** | Standard K8s workloads | Custom Resources |
 | **Injection Control** | Pod labels | CR annotations |
-| **SPIRE** | Optional (`kagenti.io/spire: enabled` label) | Always enabled |
-| **Containers** | Init: proxy-init<br/>Sidecars: envoy-proxy, spiffe-helper*, client-registration* | Sidecars: spiffe-helper, client-registration |
+| **SPIRE** | Injected by default; opt out via `kagenti.io/spire: disabled` | Always enabled |
+| **Containers** | Init: proxy-init<br/>Sidecars: envoy-proxy, spiffe-helper, client-registration | Sidecars: spiffe-helper, client-registration |
 | **Traffic Management** | ✅ Envoy proxy with iptables | ❌ No proxy |
 | **Authentication** | Multiple methods (SPIRE, mTLS, JWT, etc.) | SPIRE only |
 | **Method** | `InjectAuthBridge()` | `MutatePodSpec()` |
 
-\* Only injected when `kagenti.io/spire: enabled`
+spiffe-helper is injected by default; set `kagenti.io/spire: disabled` on the pod template to opt out.
 ```
