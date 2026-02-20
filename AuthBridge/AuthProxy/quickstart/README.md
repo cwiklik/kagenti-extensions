@@ -163,6 +163,16 @@ curl http://localhost:9080/test
 # Expected response: "unauthorized: missing Authorization header"
 ```
 
+### AgentCard discovery (A2A)
+
+**Public endpoint — no authentication required:**
+```bash
+curl http://localhost:9080/.well-known/agent.json
+# Expected: JSON AgentCard with agent name, skills, protocol version
+```
+
+The `/.well-known/agent.json` endpoint is a public [A2A](https://google.github.io/A2A/) discovery endpoint that does not require JWT authentication. This is the use case motivating route-based auth bypass (see [issue #124](https://github.com/kagenti/kagenti-extensions/issues/124)) — public discovery endpoints like AgentCard must be accessible without a token, even when the rest of the application is protected by AuthBridge.
+
 ### HTTPS test (TLS passthrough)
 
 **HTTPS connectivity through Envoy TLS passthrough:**

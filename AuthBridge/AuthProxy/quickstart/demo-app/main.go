@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/json"
 	"fmt"
 	"log"
 	"math/big"
@@ -52,6 +53,7 @@ func main() {
 
 	// HTTP server on port 8081 with JWT validation
 	httpMux := http.NewServeMux()
+	httpMux.HandleFunc("/.well-known/agent.json", agentCardHandler)
 	httpMux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		authHandler(w, r, jwksURL, issuer, audience)
 	})
@@ -126,6 +128,36 @@ func generateSelfSignedCert() (tls.Certificate, error) {
 		Certificate: [][]byte{certDER},
 		PrivateKey:  key,
 	}, nil
+}
+
+func agentCardHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	card := map[string]interface{}{
+		"name":               "demo-agent",
+		"description":        "A simple A2A demo agent for AuthBridge quickstart",
+		"version":            "1.0.0",
+		"url":                "http://localhost:8081",
+		"protocolVersion":    "0.2.6",
+		"capabilities":       map[string]interface{}{},
+		"defaultInputModes":  []string{"text/plain"},
+		"defaultOutputModes": []string{"text/plain"},
+		"skills": []map[string]interface{}{
+			{
+				"id":          "echo",
+				"name":        "Echo",
+				"description": "Echoes back the input message",
+				"tags":        []string{"utility"},
+				"inputModes":  []string{"text/plain"},
+				"outputModes": []string{"text/plain"},
+			},
+		},
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(card)
+	log.Printf("AgentCard served: %s %s", r.Method, r.URL.Path)
 }
 
 func validateJWT(tokenString, jwksURL, expectedIssuer, expectedAudience string) error {
