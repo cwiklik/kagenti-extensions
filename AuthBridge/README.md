@@ -324,6 +324,7 @@ The easiest way to get all prerequisites is to use the [Kagenti Ansible installe
 - **[GitHub Issue Agent Demo](./demos/github-issue/demo.md)** - End-to-end demo with the real GitHub Issue Agent and GitHub MCP Tool, showing transparent token exchange via AuthBridge
   - [Manual deployment](./demos/github-issue/demo-manual.md) — deploy everything via `kubectl` and YAML manifests
 - **[Single-Target Demo](./demos/single-target/demo.md)** - Basic token exchange to one target service
+- **[Webhook Demo](./demos/webhook/demo.md)** - Shows how to use the kagenti-webhook to automatically inject AuthBridge sidecars
 - **[Multi-Target Demo](./demos/multi-target/demo.md)** - Route-based token exchange to multiple targets
 
 All demos cover configuring Keycloak, deploying, and testing.

@@ -123,7 +123,7 @@ Declarative Keycloak synchronization tool that maintains client scope mappings b
 
 ### Envoy Configuration
 
-Envoy config lives in `demos/single-target/k8s/configmaps-webhook.yaml` (the `envoy-config` ConfigMap). Key listeners: `outbound_listener` (15123), `inbound_listener` (15124). Inbound listener injects `x-authbridge-direction: inbound` header. Both use ext_proc cluster pointing to localhost:9090.
+Envoy config lives in `demos/webhook/k8s/configmaps-webhook.yaml` (the `envoy-config` ConfigMap). Key listeners: `outbound_listener` (15123), `inbound_listener` (15124). Inbound listener injects `x-authbridge-direction: inbound` header. Both use ext_proc cluster pointing to localhost:9090.
 
 ## Demo Scenarios
 
@@ -153,7 +153,7 @@ There are **four** setup scripts for different demo scenarios:
 
 ## Required ConfigMaps for Webhook Injection
 
-When the kagenti-webhook injects sidecars, four ConfigMaps must exist in the target namespace. All are defined in `demos/single-target/k8s/configmaps-webhook.yaml`:
+When the kagenti-webhook injects sidecars, four ConfigMaps must exist in the target namespace. All are defined in `demos/webhook/k8s/configmaps-webhook.yaml`:
 
 | ConfigMap | Consumer | Key Fields |
 |-----------|----------|------------|
@@ -192,11 +192,11 @@ make deploy
 make undeploy
 ```
 
-### Full Demo with Webhook (Single Target)
+### Full Demo with Webhook
 
 ```bash
 # 1. Setup Keycloak (requires port-forward to Keycloak)
-cd AuthBridge/demos/single-target
+cd AuthBridge/demos/webhook
 pip install -r ../../requirements.txt
 python setup_keycloak.py            # Creates realm, auth-target client, scopes, alice user
 
@@ -204,9 +204,10 @@ python setup_keycloak.py            # Creates realm, auth-target client, scopes,
 kubectl apply -f k8s/configmaps-webhook.yaml -n <namespace>
 
 # 3. Deploy workloads (webhook auto-injects sidecars)
-kubectl apply -f k8s/authbridge-deployment.yaml           # With SPIFFE
+kubectl apply -f k8s/agent-deployment-webhook.yaml           # With SPIFFE
 # or
-kubectl apply -f k8s/authbridge-deployment-no-spiffe.yaml # Without SPIFFE
+kubectl apply -f k8s/agent-deployment-webhook-no-spiffe.yaml # Without SPIFFE
+kubectl apply -f k8s/auth-target-deployment-webhook.yaml     # Target service
 ```
 
 ## Important Port Mapping
@@ -272,7 +273,7 @@ kubectl apply -f k8s/authbridge-deployment-no-spiffe.yaml # Without SPIFFE
 - All scripts use `python-keycloak` library (KeycloakAdmin class)
 
 ### Changing Envoy Configuration
-- Edit the `envoy.yaml` section in `demos/single-target/k8s/configmaps-webhook.yaml` (or the appropriate demo's configmaps file)
+- Edit the `envoy.yaml` section in `demos/webhook/k8s/configmaps-webhook.yaml` (or the appropriate demo's configmaps file)
 - Key listener/cluster names: `outbound_listener`, `inbound_listener`, `original_destination`, `ext_proc_cluster`
 - After changes, re-apply the ConfigMap and restart pods
 
@@ -290,7 +291,7 @@ kubectl apply -f k8s/authbridge-deployment-no-spiffe.yaml # Without SPIFFE
 
 6. **Demo SPIFFE ID is hardcoded**: `demos/single-target/setup_keycloak.py` hardcodes `AGENT_SPIFFE_ID = "spiffe://localtest.me/ns/authbridge/sa/agent"`. Change this if using a different namespace/SA.
 
-7. **Admin credentials in ConfigMap**: `demos/single-target/k8s/configmaps-webhook.yaml` stores Keycloak admin credentials in a ConfigMap (not a Secret). This is for demo only -- production should use Kubernetes Secrets.
+7. **Admin credentials in ConfigMap**: `demos/webhook/k8s/configmaps-webhook.yaml` stores Keycloak admin credentials in a ConfigMap (not a Secret). This is for demo only -- production should use Kubernetes Secrets.
 
 8. **Envoy Lua filter required for inbound**: The `x-authbridge-direction: inbound` header MUST be injected via a Lua filter before ext_proc in the inbound listener. Route-level `request_headers_to_add` does NOT work because the router filter runs after ext_proc.
 
