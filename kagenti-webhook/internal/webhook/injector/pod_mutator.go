@@ -44,10 +44,16 @@ const (
 	AuthBridgeInjectValue   = "enabled"
 	AuthBridgeDisabledValue = "disabled"
 
-	// Label selector for SPIRE enablement
+	// SPIRE opt-out label. Setting kagenti.io/spire=disabled on a workload blocks
+	// spiffe-helper injection (layer 7 of the precedence chain). Any other value
+	// (including absence of the label) leaves spiffe-helper injection to the
+	// upstream precedence layers.
 	SpireEnableLabel   = "kagenti.io/spire"
-	SpireEnabledValue  = "enabled"
 	SpireDisabledValue = "disabled"
+	// SpireEnabledValue is a non-operative label value under the opt-out model.
+	// Retained as a named constant so tests can assert that a non-disabled value
+	// does not block injection.
+	SpireEnabledValue = "enabled"
 	// Istio exclusion annotations
 	IstioSidecarInjectAnnotation = "sidecar.istio.io/inject"
 	AmbientRedirectionAnnotation = "ambient.istio.io/redirection"

@@ -98,7 +98,7 @@ sleep 10
 kubectl get pods -n team1 -l app=test-no-envoy -o jsonpath='{range .items[*]}{.spec.initContainers[*].name}{"\n"}{.spec.containers[*].name}{"\n"}{end}'
 ```
 
-**Expected**: No `proxy-init`, no `envoy-proxy`. Should have `kagenti-client-registration` only (and `spiffe-helper` only if `kagenti.io/spire=enabled` label is present).
+**Expected**: No `proxy-init`, no `envoy-proxy`. Should have `spiffe-helper` and `kagenti-client-registration` (spiffe-helper is injected by default; add `kagenti.io/spire: disabled` to suppress it).
 
 Restore the gate afterward:
 
