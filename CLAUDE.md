@@ -18,10 +18,11 @@ kagenti-extensions/
 ├── AuthBridge/               # Authentication bridge components
 │   ├── AuthProxy/            #   Envoy + ext-proc sidecar (Go) — token validation & exchange
 │   │   ├── go-processor/     #     gRPC ext-proc server (inbound JWT validation, outbound token exchange)
-│   │   └── quickstart/       #     Standalone demo (Keycloak setup script, demo-app)
+│   │   └── quickstart/       #     Standalone demo (no SPIFFE)
 │   ├── client-registration/  #   Keycloak auto-registration (Python)
-│   ├── k8s/                  #   Example K8s deployment manifests
-│   └── spiffe-token-helper/  #   SPIFFE helper utilities
+│   ├── demos/                #   Demo scenarios (single-target, multi-target, github-issue)
+│   ├── keycloak_sync.py      #   Declarative Keycloak sync tool
+│   └── setup_keycloak-webhook.py
 ├── charts/
 │   └── kagenti-webhook/      # Helm chart for the webhook
 ├── .github/
@@ -57,32 +58,15 @@ A Kubernetes **mutating admission webhook** that intercepts workload creation (D
 An **Envoy proxy with a gRPC external processor** that provides transparent traffic interception for both inbound JWT validation and outbound OAuth 2.0 token exchange (RFC 8693).
 
 **Location:** `AuthBridge/AuthProxy/`
-**Language:** Go 1.23 (ext-proc processor)
+**Language:** Go 1.23
 **Detailed guide:** [`AuthBridge/CLAUDE.md`](AuthBridge/CLAUDE.md)
-**Key files:**
-- `go-processor/main.go` — The ext-proc gRPC server. Handles:
-  - **Inbound**: Validates JWT (signature via JWKS, issuer, optional audience)
-  - **Outbound HTTP**: Performs token exchange, replaces Authorization header
-  - **Outbound HTTPS**: TLS passthrough (no interception)
-  - Direction detected via `x-authbridge-direction` header injected by Envoy
-- `main.go` — Example pass-through proxy application (not a core component)
-- `init-iptables.sh` — iptables setup for transparent traffic interception. Extensively documented for Istio ambient mesh coexistence.
-- `entrypoint-envoy.sh` — Starts go-processor in background, then Envoy in foreground
-- `Dockerfile` — auth-proxy example app image
-- `Dockerfile.envoy` — Envoy + go-processor combined image (`envoy-with-processor`)
-- `Dockerfile.init` — proxy-init (Alpine + iptables)
 
-**Build:** `cd AuthBridge/AuthProxy && make build-images`
-**Deploy:** `make load-images && make deploy`
+**Core components:**
+- `go-processor/main.go` — gRPC ext-proc server (inbound JWT validation, outbound token exchange)
+- `init-iptables.sh` — Traffic interception setup (Istio ambient mesh compatible)
+- `Dockerfile.{envoy,init}` — Container images
 
-**Important ports:**
-| Port | Component | Purpose |
-|------|-----------|---------|
-| 15123 | Envoy | Outbound listener (iptables redirects here) |
-| 15124 | Envoy | Inbound listener (iptables redirects here) |
-| 9090 | go-processor | gRPC ext-proc server |
-| 9901 | Envoy | Admin interface |
-| 8080 | auth-proxy | Example application (not part of sidecar) |
+**Ports:** 15123 (outbound), 15124 (inbound), 9090 (ext-proc), 9901 (admin)
 
 ### 3. Client Registration (Python)
 
@@ -91,18 +75,8 @@ A Python script that **automatically registers Kubernetes workloads as Keycloak 
 **Location:** `AuthBridge/client-registration/`
 **Language:** Python 3.12
 **Detailed guide:** [`AuthBridge/CLAUDE.md`](AuthBridge/CLAUDE.md)
-**Key files:**
-- `client_registration.py` — Main script. Idempotent: creates client if not exists, always retrieves and writes secret.
-- `Dockerfile` — Python 3.12-slim, runs as UID/GID 1000 (must match `ClientRegistrationUID`/`ClientRegistrationGID` in webhook's `container_builder.go`)
-- `requirements.txt` — `python-keycloak`, `PyJWT`
 
-**Flow:**
-1. Waits for `/opt/jwt_svid.token` (from spiffe-helper) if SPIRE enabled
-2. Extracts SPIFFE ID from JWT `sub` claim (or uses `CLIENT_NAME` env var)
-3. Registers client in Keycloak via admin API
-4. Writes client secret to a shared file:
-   - By default, to `/shared/secret.txt`
-   - When run via the webhook, `SECRET_FILE_PATH` is set so the secret is written to `/shared/client-secret.txt`
+**Flow:** Reads SPIFFE ID from JWT, registers client in Keycloak, writes secret to `/shared/client-secret.txt`
 
 ## How the Components Work Together
 
@@ -250,7 +224,7 @@ cd AuthBridge/AuthProxy && make build-images
 
 1. Set up a Kind cluster with SPIRE + Keycloak (use [Kagenti Ansible installer](https://github.com/kagenti/kagenti/blob/main/docs/install.md))
 2. Deploy the webhook: `cd kagenti-webhook && make local-dev CLUSTER=<name>`
-3. Follow `AuthBridge/demo.md` for the complete AuthBridge demo
+3. Follow `AuthBridge/demos/single-target/demo.md` for the complete AuthBridge demo
 
 ### Quick Webhook Iteration
 
@@ -282,7 +256,7 @@ AUTHBRIDGE_DEMO=true ./scripts/webhook-rollout.sh
 - UID/GID 1000 in Dockerfile must match `ClientRegistrationUID`/`ClientRegistrationGID` in webhook's `container_builder.go`
 
 ### Kubernetes Manifests
-- Example deployment YAMLs in `AuthBridge/k8s/`
+- Example deployment YAMLs in `AuthBridge/demos/*/k8s/`
 - Helm templates in `charts/kagenti-webhook/templates/`
 - Helm templates excluded from YAML check in pre-commit (they contain Go template syntax)
 
