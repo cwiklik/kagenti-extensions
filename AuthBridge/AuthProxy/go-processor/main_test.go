@@ -81,6 +81,44 @@ func TestMatchBypassPath(t *testing.T) {
 			requestPath:  "/",
 			expectBypass: true,
 		},
+		// Malformed pattern: silently skipped, does not match
+		{
+			name:         "malformed pattern is skipped",
+			patterns:     []string{"["},
+			requestPath:  "/healthz",
+			expectBypass: false,
+		},
+		{
+			name:         "malformed pattern does not block valid patterns",
+			patterns:     []string{"[", "/healthz"},
+			requestPath:  "/healthz",
+			expectBypass: true,
+		},
+		// Path normalization: non-canonical forms should still match
+		{
+			name:         "double slash normalized",
+			patterns:     []string{"/healthz"},
+			requestPath:  "//healthz",
+			expectBypass: true,
+		},
+		{
+			name:         "dot segment normalized",
+			patterns:     []string{"/healthz"},
+			requestPath:  "/./healthz",
+			expectBypass: true,
+		},
+		{
+			name:         "dot-dot segment normalized",
+			patterns:     []string{"/.well-known/*"},
+			requestPath:  "/foo/../.well-known/agent.json",
+			expectBypass: true,
+		},
+		{
+			name:         "trailing slash normalized",
+			patterns:     []string{"/healthz"},
+			requestPath:  "/healthz/",
+			expectBypass: true,
+		},
 	}
 
 	for _, tt := range tests {

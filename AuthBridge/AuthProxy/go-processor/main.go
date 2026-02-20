@@ -63,14 +63,21 @@ var defaultBypassInboundPaths = []string{"/.well-known/*", "/healthz", "/readyz"
 var bypassInboundPaths = defaultBypassInboundPaths
 
 // matchBypassPath checks if the given request path matches any configured bypass pattern.
-// Query strings are stripped before matching.
+// Query strings are stripped and the path is normalized before matching.
 func matchBypassPath(requestPath string) bool {
 	// Strip query string if present
 	if idx := strings.IndexByte(requestPath, '?'); idx >= 0 {
 		requestPath = requestPath[:idx]
 	}
+	// Normalize to prevent bypass via non-canonical forms (e.g., //healthz, /./healthz)
+	requestPath = path.Clean(requestPath)
 	for _, pattern := range bypassInboundPaths {
-		if matched, err := path.Match(pattern, requestPath); err == nil && matched {
+		matched, err := path.Match(pattern, requestPath)
+		if err != nil {
+			log.Printf("[Inbound] Invalid bypass pattern %q: %v", pattern, err)
+			continue
+		}
+		if matched {
 			return true
 		}
 	}
@@ -593,9 +600,14 @@ func main() {
 		bypassInboundPaths = nil
 		for _, p := range strings.Split(bypassEnv, ",") {
 			p = strings.TrimSpace(p)
-			if p != "" {
-				bypassInboundPaths = append(bypassInboundPaths, p)
+			if p == "" {
+				continue
 			}
+			if _, err := path.Match(p, "/"); err != nil {
+				log.Printf("[Inbound] Ignoring invalid bypass path pattern %q: %v", p, err)
+				continue
+			}
+			bypassInboundPaths = append(bypassInboundPaths, p)
 		}
 	}
 	log.Printf("[Inbound] Bypass paths: %v", bypassInboundPaths)
