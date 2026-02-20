@@ -106,7 +106,7 @@ ext_proc (port 9090) performs three checks on the `Authorization: Bearer <token>
 
 Requests that fail any check receive an immediate `401 Unauthorized` response from
 Envoy — the agent application never sees them. This is tested in
-[Step 8a–8b](#step-8-test-via-cli-optional).
+[Step 9a–9b](#step-9-test-via-cli-optional).
 
 ---
 
@@ -195,42 +195,61 @@ kubectl get configmap environments -n team1 -o jsonpath='{.data.KEYCLOAK_REALM}'
 
 ---
 
-## Step 3: Import the GitHub Tool via Kagenti UI
+## Step 3: Create the GitHub Tool Secrets
 
-1. Navigate to [Import New Tool](http://kagenti-ui.localtest.me:8080/Import_New_Tool#import-new-tool)
+The GitHub tool needs PAT tokens to access the GitHub API. Create a Kubernetes secret
+with your tokens before importing the tool:
+
+```bash
+export PRIVILEGED_ACCESS_PAT=<your-privileged-pat>
+export PUBLIC_ACCESS_PAT=<your-public-pat>
+```
+
+Provide your actual GitHub Personal Access Tokens.
+
+```bash
+kubectl create secret generic github-tool-secrets -n team1 \
+  --from-literal=INIT_AUTH_HEADER="Bearer $PRIVILEGED_ACCESS_PAT" \
+  --from-literal=UPSTREAM_HEADER_TO_USE_IF_IN_AUDIENCE="Bearer $PRIVILEGED_ACCESS_PAT" \
+  --from-literal=UPSTREAM_HEADER_TO_USE_IF_NOT_IN_AUDIENCE="Bearer $PUBLIC_ACCESS_PAT"
+```
+
+---
+
+## Step 4: Import the GitHub Tool via Kagenti UI
+
+1. Navigate to [Import New Tool](http://kagenti-ui.localtest.me:8080/tools/import)
    in the Kagenti UI.
 
 2. Select namespace: `team1`
 
 3. Select **Build from source** as the deployment method.
 
-4. Under **Select Environment Variable Sets**, click `Import .env File` and provide:
-   - **GitHub Repository URL:** `https://github.com/kagenti/agent-examples/`
-   - **Path to .env file:** `mcp/github_tool/.env.template`
-   - Click **Import** — this populates the environment variables.
+4. Under **Source Code** select:
+   - **Git Repository URL**: `https://github.com/kagenti/agent-examples`
+   - **Branch or Tag**: `main`
+   - **Example Tools**: `GitHub Tool`
+   - **Source Subfolder**: `mcp/github_tool`
 
-5. **Update the imported environment variables** with your tokens and Keycloak settings:
+5. **Workload Type** select `Deployment`
 
-   | Variable | Value |
-   |----------|-------|
-   | `INIT_AUTH_HEADER` | `Bearer <PRIVILEGED_ACCESS_PAT>` |
-   | `UPSTREAM_HEADER_TO_USE_IF_IN_AUDIENCE` | `Bearer <PRIVILEGED_ACCESS_PAT>` |
-   | `UPSTREAM_HEADER_TO_USE_IF_NOT_IN_AUDIENCE` | `Bearer <PUBLIC_ACCESS_PAT>` |
-   | `ISSUER` | `http://keycloak.localtest.me:8080/realms/demo` |
-   | `JWKS_URL` | `http://keycloak-service.keycloak.svc.cluster.local:8080/realms/demo/protocol/openid-connect/certs` |
-   | `AUDIENCE` | `github-tool` |
+6. Set **MCP Transport Protocol** to `streamable HTTP`
 
-6. Under **Tool Kubernetes Pod Configuration**, set **Target Port** to `9090`.
+7. Under **Port Configuration**, set both **Service and Target Ports** to `9090`
 
-7. Use the source repository: `https://github.com/kagenti/agent-examples`
+8. Under **Environment Variables**, click **Import from File/URL**,
+   Select **From URL** and provide the `.env` file from this repo:
+   - **URL** `https://raw.githubusercontent.com/kagenti/agent-examples/refs/heads/main/mcp/github_tool/.env.openai`
+   - Click **Fetch &Parse** — this populates all environment variables, including
+     Secret references for the PAT tokens and direct values for Keycloak settings.
 
-8. Choose the `main` branch.
+   The imported variables will show three **Secret** type entries referencing
+   `github-tool-secrets` and three **Direct Value** entries for Keycloak configuration.
+   No manual editing is needed.
 
-9. Set **Select Protocol** to `streamable-http`.
+   > **Tip:** You can also upload the file directly from your local system.
 
-10. Under **Specify Source Subfolder**, select: `mcp/github_tool`
-
-11. Click **Build & Deploy New Tool**.
+9. Click **Build & Deploy New Tool**.
 
 You will be redirected to a **Build Progress** page where you can monitor the
 Shipwright build. Wait for it to complete.
@@ -242,7 +261,7 @@ Shipwright build. Wait for it to complete.
 
 ---
 
-## Step 4: Import the GitHub Issue Agent via Kagenti UI
+## Step 5: Import the GitHub Issue Agent via Kagenti UI
 
 1. Navigate to [Import New Agent](http://kagenti-ui.localtest.me:8080/Import_New_Agent#import-new-agent)
    in the Kagenti UI.
@@ -290,7 +309,7 @@ Wait for the Shipwright build to complete and the deployment to become ready.
 
 ---
 
-## Step 5: Verify the Deployment
+## Step 6: Verify the Deployment
 
 ### Check pod status
 
@@ -373,7 +392,7 @@ The UI maps **port 8080** to the agent's internal port 8000.
 
 ---
 
-## Step 6: Verify Ollama is Running
+## Step 7: Verify Ollama is Running
 
 The agent uses an LLM for inference. If using Ollama, verify it is running:
 
@@ -387,7 +406,7 @@ model is pulled (`ollama pull ibm/granite4:latest`).
 
 ---
 
-## Step 7: Chat via Kagenti UI
+## Step 8: Chat via Kagenti UI
 
 This is the primary way to interact with the agent when using the UI deployment.
 
@@ -407,7 +426,7 @@ This is the primary way to interact with the agent when using the UI deployment.
 
 ---
 
-## Step 8: Test via CLI (Optional)
+## Step 9: Test via CLI (Optional)
 
 You can also test the AuthBridge flow from the command line to verify inbound
 validation and token exchange.
@@ -430,7 +449,7 @@ kubectl run test-client --image=nicolaka/netshoot -n team1 --restart=Never -- sl
 kubectl wait --for=condition=ready pod/test-client -n team1 --timeout=30s
 ```
 
-### 8a. Inbound Rejection - No Token
+### 9a. Inbound Rejection - No Token
 
 ```bash
 kubectl exec test-client -n team1 -- curl -s \
@@ -438,7 +457,7 @@ kubectl exec test-client -n team1 -- curl -s \
 # Expected: {"error":"unauthorized","message":"missing Authorization header"}
 ```
 
-### 8b. Inbound Rejection - Invalid Token (Signature Check)
+### 9b. Inbound Rejection - Invalid Token (Signature Check)
 
 A malformed or tampered token fails the JWKS signature check:
 
@@ -449,7 +468,7 @@ kubectl exec test-client -n team1 -- curl -s \
 # Expected: {"error":"unauthorized","message":"token validation failed: failed to parse/validate token: ..."}
 ```
 
-### 8c. End-to-End Test with Valid Token
+### 9c. End-to-End Test with Valid Token
 
 Open a shell inside the test-client pod to avoid JWT shell expansion issues:
 
@@ -521,7 +540,7 @@ Exit the pod when done:
 exit
 ```
 
-### 8d. Verify AuthProxy Logs (Inbound + Outbound)
+### 9d. Verify AuthProxy Logs (Inbound + Outbound)
 
 Check the ext_proc logs to confirm both inbound validation and outbound token
 exchange are working:
