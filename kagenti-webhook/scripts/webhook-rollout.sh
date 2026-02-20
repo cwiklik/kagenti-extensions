@@ -148,18 +148,37 @@ echo "[5/6] Updating deployment (image + config volumes)..."
 # Update the container image
 kubectl -n "${NAMESPACE}" set image deployment/kagenti-webhook-controller-manager "manager=${IMAGE_NAME}"
 
-# Patch the deployment to add volumes and volumeMounts if missing.
-# Each volume is patched independently so that adding a new volume
-# is not blocked by an already-existing one from a previous run.
-kubectl -n "${NAMESPACE}" patch deployment kagenti-webhook-controller-manager --type=json -p='[
-  {"op": "add", "path": "/spec/template/spec/volumes/-", "value": {"name": "platform-config", "configMap": {"name": "kagenti-webhook-defaults"}}},
-  {"op": "add", "path": "/spec/template/spec/containers/0/volumeMounts/-", "value": {"name": "platform-config", "mountPath": "/etc/kagenti", "readOnly": true}}
-]' 2>/dev/null || echo "  platform-config volume patch already applied or not needed"
+# Idempotently ensure a volume and corresponding volumeMount exist on the deployment.
+# JSON-patch op:add to /volumes/- and /volumeMounts/- appends duplicates on re-run,
+# so we pre-check by name before patching.
+ensure_volume_and_mount() {
+    local volume_name="$1"
+    local configmap_name="$2"
+    local mount_path="$3"
 
-kubectl -n "${NAMESPACE}" patch deployment kagenti-webhook-controller-manager --type=json -p='[
-  {"op": "add", "path": "/spec/template/spec/volumes/-", "value": {"name": "feature-gates", "configMap": {"name": "kagenti-webhook-feature-gates"}}},
-  {"op": "add", "path": "/spec/template/spec/containers/0/volumeMounts/-", "value": {"name": "feature-gates", "mountPath": "/etc/kagenti/feature-gates", "readOnly": true}}
-]' 2>/dev/null || echo "  feature-gates volume patch already applied or not needed"
+    local existing_volumes
+    existing_volumes="$(kubectl -n "${NAMESPACE}" get deployment kagenti-webhook-controller-manager \
+        -o jsonpath='{.spec.template.spec.volumes[*].name}' 2>/dev/null || true)"
+
+    local existing_mounts
+    existing_mounts="$(kubectl -n "${NAMESPACE}" get deployment kagenti-webhook-controller-manager \
+        -o jsonpath='{.spec.template.spec.containers[0].volumeMounts[*].name}' 2>/dev/null || true)"
+
+    if echo "${existing_volumes}" | tr ' ' '\n' | grep -qx "${volume_name}" || \
+       echo "${existing_mounts}" | tr ' ' '\n' | grep -qx "${volume_name}"; then
+        echo "  ${volume_name} volume/volumeMount already present, skipping patch"
+        return 0
+    fi
+
+    kubectl -n "${NAMESPACE}" patch deployment kagenti-webhook-controller-manager --type=json -p="[
+      {\"op\": \"add\", \"path\": \"/spec/template/spec/volumes/-\", \"value\": {\"name\": \"${volume_name}\", \"configMap\": {\"name\": \"${configmap_name}\"}}},
+      {\"op\": \"add\", \"path\": \"/spec/template/spec/containers/0/volumeMounts/-\", \"value\": {\"name\": \"${volume_name}\", \"mountPath\": \"${mount_path}\", \"readOnly\": true}}
+    ]"
+    echo "  ${volume_name} volume/volumeMount added"
+}
+
+ensure_volume_and_mount "platform-config" "kagenti-webhook-defaults"       "/etc/kagenti"
+ensure_volume_and_mount "feature-gates"   "kagenti-webhook-feature-gates"  "/etc/kagenti/feature-gates"
 
 echo ""
 echo "Waiting for rollout to complete..."

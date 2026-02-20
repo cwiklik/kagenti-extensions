@@ -9,6 +9,63 @@
 
 set -euo pipefail
 
+# ── Container runtime detection ───────────────────────────────────────
+# Supports Docker and Podman. Override with DOCKER_IMPL=docker|podman.
+detect_impl() {
+  if [ -n "${DOCKER_IMPL-}" ]; then
+    printf '%s\n' "${DOCKER_IMPL}"
+    return
+  fi
+  if command -v podman >/dev/null 2>&1; then
+    out=$(podman info 2>/dev/null || true)
+    if printf '%s' "$out" | grep -Ei 'apiversion|buildorigin|libpod|podman|version:' >/dev/null 2>&1; then
+      printf 'podman\n'; return
+    fi
+  fi
+  if command -v docker >/dev/null 2>&1; then
+    out=$(docker info 2>/dev/null || true)
+    if printf '%s' "$out" | grep -Ei 'client: docker engine|docker engine - community|server:' >/dev/null 2>&1; then
+      printf 'docker\n'; return
+    fi
+    if printf '%s' "$out" | grep -Ei 'apiversion|buildorigin|libpod|podman|version:' >/dev/null 2>&1; then
+      printf 'podman\n'; return
+    fi
+  fi
+  printf 'unknown\n'
+}
+
+# ── Dependency checks ─────────────────────────────────────────────────
+# Validate all required tools are present before touching the cluster.
+check_deps() {
+  local missing=()
+  for cmd in kubectl jq; do
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+      missing+=("$cmd")
+    fi
+  done
+  # Require docker or podman
+  if ! command -v docker >/dev/null 2>&1 && ! command -v podman >/dev/null 2>&1; then
+    missing+=("docker or podman")
+  fi
+  if [ "${#missing[@]}" -gt 0 ]; then
+    echo "ERROR: Missing required tools: ${missing[*]}" >&2
+    echo "Install them and re-run:" >&2
+    echo "  kubectl — https://kubernetes.io/docs/tasks/tools/" >&2
+    echo "  docker  — https://docs.docker.com/get-docker/" >&2
+    echo "  podman  — https://podman.io/getting-started/installation" >&2
+    echo "  jq      — https://stedolan.github.io/jq/download/" >&2
+    exit 1
+  fi
+}
+check_deps
+
+CONTAINER_RT=$(detect_impl)
+if [ "${CONTAINER_RT}" = "unknown" ]; then
+  echo "ERROR: Could not detect a working Docker or Podman installation." >&2
+  echo "Set DOCKER_IMPL=docker or DOCKER_IMPL=podman to override." >&2
+  exit 1
+fi
+
 NS="${1:-team1}"
 WEBHOOK_NS="kagenti-webhook-system"
 CLUSTER="${CLUSTER:-kagenti}"
@@ -63,8 +120,8 @@ speed_up_kubelet() {
   # 2. Write the updated config to the node and restart kubelet
   kubectl get configmap kubelet-config -n kube-system \
     -o jsonpath='{.data.kubelet}' \
-    | docker exec -i "${CLUSTER}-control-plane" tee /var/lib/kubelet/config.yaml >/dev/null
-  docker exec "${CLUSTER}-control-plane" systemctl restart kubelet
+    | "${CONTAINER_RT}" exec -i "${CLUSTER}-control-plane" tee /var/lib/kubelet/config.yaml >/dev/null
+  "${CONTAINER_RT}" exec "${CLUSTER}-control-plane" systemctl restart kubelet
 
   sleep 5
   log "Kubelet restarted with syncFrequency=10s"
@@ -85,8 +142,8 @@ reset_kubelet() {
   # 2. Write the restored config to the node and restart kubelet
   kubectl get configmap kubelet-config -n kube-system \
     -o jsonpath='{.data.kubelet}' \
-    | docker exec -i "${CLUSTER}-control-plane" tee /var/lib/kubelet/config.yaml >/dev/null
-  docker exec "${CLUSTER}-control-plane" systemctl restart kubelet
+    | "${CONTAINER_RT}" exec -i "${CLUSTER}-control-plane" tee /var/lib/kubelet/config.yaml >/dev/null
+  "${CONTAINER_RT}" exec "${CLUSTER}-control-plane" systemctl restart kubelet
 
   sleep 5
   log "Kubelet reset to default syncFrequency"
@@ -223,45 +280,54 @@ echo ""
 kubectl label namespace "${NS}" kagenti-enabled=true --overwrite >/dev/null 2>&1
 log "Namespace ${NS} labelled kagenti-enabled=true"
 
+# Speed up ConfigMap propagation first so that all subsequent hot-reload
+# waits use the fast 10s kubelet sync (HOTRELOAD_MAX_WAIT=30s requires this).
+# A brief pause lets the kubelet finish reinitializing after its restart.
+speed_up_kubelet
+sleep 10
+log "Kubelet stabilized"
+
 # Ensure feature gates are all enabled at start.
-# Must run BEFORE speed_up_kubelet: reset_feature_gates waits for a hot-reload
-# log event, and the kubelet needs to already be in a stable sync state for
-# that wait to complete within the timeout.
+# Runs after speed_up_kubelet so the hot-reload confirmation arrives well
+# within HOTRELOAD_MAX_WAIT.
 reset_feature_gates
 
-# Speed up ConfigMap propagation for the duration of the test run.
-# This runs AFTER the initial reset so it doesn't race with post-restart
-# kubelet re-initialization.
-speed_up_kubelet
+# Restart the webhook pod so startup banners appear at the top of the log.
+# Runs after speed_up_kubelet so the new pod benefits from fast CM sync.
+# Without this, a long-running pod may have thousands of log lines since
+# startup, causing --tail=500 to miss the one-time banners.
+log "Restarting webhook pod for fresh startup logs..."
+kubectl rollout restart deployment/kagenti-webhook-controller-manager \
+    -n "${WEBHOOK_NS}" >/dev/null
+kubectl rollout status deployment/kagenti-webhook-controller-manager \
+    -n "${WEBHOOK_NS}" --timeout=90s >/dev/null
+log "Webhook pod ready"
 
 # ── Test 1: Config Loading ───────────────────────────────────────────
 
 separator
 log "Test 1: Verify startup & config loading"
 
-# Startup banners are logged once at pod start; use a large tail to ensure they're captured
-# even when the pod has been running for a while and has many subsequent log lines.
-CONFIG_LOGS=$(kubectl logs -n "${WEBHOOK_NS}" -l control-plane=controller-manager --tail=5000 2>/dev/null || true)
+# The pod was just restarted above, so startup banners appear in the first
+# few dozen lines. --tail=500 is sufficient and avoids clock-skew issues
+# that make --since-time unreliable across local machine and cluster nodes.
+CONFIG_LOGS=$(kubectl logs -n "${WEBHOOK_NS}" -l control-plane=controller-manager \
+    --tail=500 2>/dev/null || true)
 
 if echo "${CONFIG_LOGS}" | grep -q "PLATFORM CONFIGURATION"; then
   pass "Test 1: Platform configuration banner found in logs"
+elif echo "${CONFIG_LOGS}" | grep -q "Platform config"; then
+  pass "Test 1: Platform config loaded (older log format)"
 else
-  # Fall back to checking the older log format
-  if echo "${CONFIG_LOGS}" | grep -q "Platform config loaded"; then
-    pass "Test 1: Platform config loaded (older log format)"
-  else
-    fail "Test 1: Platform configuration NOT found in logs"
-  fi
+  fail "Test 1: Platform configuration NOT found in logs"
 fi
 
 if echo "${CONFIG_LOGS}" | grep -q "FEATURE GATES"; then
   pass "Test 1: Feature gates banner found in logs"
+elif echo "${CONFIG_LOGS}" | grep -q "Feature gates\|feature.gate"; then
+  pass "Test 1: Feature gates loaded (older log format)"
 else
-  if echo "${CONFIG_LOGS}" | grep -q "Feature gates"; then
-    pass "Test 1: Feature gates loaded (older log format)"
-  else
-    fail "Test 1: Feature gates NOT found in logs"
-  fi
+  fail "Test 1: Feature gates NOT found in logs"
 fi
 
 # ── Test 2: Baseline — All Sidecars ─────────────────────────────────

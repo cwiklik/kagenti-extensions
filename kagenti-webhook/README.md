@@ -16,8 +16,8 @@ The webhook injects:
 
 1. **`proxy-init`** (init container) - Configures iptables rules for traffic interception
 2. **`envoy-proxy`** - Service mesh proxy for traffic management
-3. **`spiffe-helper`** (optional, if SPIRE enabled) - Obtains SPIFFE Verifiable Identity Documents (SVIDs) from the SPIRE agent via the Workload API
-4. **`kagenti-client-registration`** (optional, if SPIRE enabled) - Registers the resource as an OAuth2 client in Keycloak using the SPIFFE identity
+3. **`spiffe-helper`** (injected by default; opt out with `kagenti.io/spire: disabled`) - Obtains SPIFFE Verifiable Identity Documents (SVIDs) from the SPIRE agent via the Workload API
+4. **`kagenti-client-registration`** (injected by default; skips SVID exchange when spiffe-helper is opted out) - Registers the resource as an OAuth2 client in Keycloak using the SPIFFE identity
 
 ### Why Sidecar Injection?
 
@@ -194,8 +194,8 @@ defaults:
     inboundProxyPort: 15124
   resources:
     envoyProxy:
-      requests: { cpu: 200m, memory: 256Mi }
-      limits: { cpu: 50m, memory: 64Mi }
+      requests: { cpu: 50m, memory: 64Mi }
+      limits: { cpu: 200m, memory: 256Mi }
     # ... (proxyInit, spiffeHelper, clientRegistration)
   sidecars:
     envoyProxy: { enabled: true }
@@ -254,7 +254,7 @@ The AuthBridge webhook supports two modes of operation:
                        (OAuth2/OIDC)        (via Envoy proxy)
 ```
 
-#### Without SPIRE Integration (default, no `kagenti.io/spire` label)
+#### Without SPIRE Integration (opt-out via `kagenti.io/spire: disabled`)
 
 ```
 ┌────────────────────────────────────────────────────────────────┐

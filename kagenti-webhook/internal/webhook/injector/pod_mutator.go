@@ -41,10 +41,16 @@ const (
 	AuthBridgeInjectValue   = "enabled"
 	AuthBridgeDisabledValue = "disabled"
 
-	// Label selector for SPIRE enablement
+	// SPIRE opt-out label. Setting kagenti.io/spire=disabled on a workload blocks
+	// spiffe-helper injection (layer 7 of the precedence chain). Any other value
+	// (including absence of the label) leaves spiffe-helper injection to the
+	// upstream precedence layers.
 	SpireEnableLabel   = "kagenti.io/spire"
-	SpireEnabledValue  = "enabled"
 	SpireDisabledValue = "disabled"
+	// SpireEnabledValue is a non-operative label value under the opt-out model.
+	// Retained as a named constant so tests can assert that a non-disabled value
+	// does not block injection.
+	SpireEnabledValue = "enabled"
 	// Istio exclusion annotations
 	IstioSidecarInjectAnnotation = "sidecar.istio.io/inject"
 	AmbientRedirectionAnnotation = "ambient.istio.io/redirection"
@@ -120,16 +126,6 @@ func (m *PodMutator) MutatePodSpec(ctx context.Context, podSpec *corev1.PodSpec,
 	return nil
 }
 
-// IsSpireEnabled checks if SPIRE is enabled via the kagenti.io/spire label
-func IsSpireEnabled(labels map[string]string) bool {
-	value, exists := labels[SpireEnableLabel]
-	if !exists {
-		// Default to disabled if label is not present
-		return false
-	}
-	return value == SpireEnabledValue
-}
-
 // InjectAuthBridge evaluates the multi-layer precedence chain and conditionally injects sidecars.
 func (m *PodMutator) InjectAuthBridge(ctx context.Context, podSpec *corev1.PodSpec, namespace, crName string, labels map[string]string) (bool, error) {
 	mutatorLog.Info("InjectAuthBridge called", "namespace", namespace, "crName", crName, "labels", labels)
@@ -181,7 +177,7 @@ func (m *PodMutator) InjectAuthBridge(ctx context.Context, podSpec *corev1.PodSp
 		return false, nil
 	}
 
-	spireEnabled := decision.SpiffeHelper.Inject
+	spiffeHelperInjected := decision.SpiffeHelper.Inject
 
 	// Initialize slices
 	if podSpec.Containers == nil {
@@ -211,13 +207,13 @@ func (m *PodMutator) InjectAuthBridge(ctx context.Context, podSpec *corev1.PodSp
 	}
 
 	if decision.ClientRegistration.Inject && !containerExists(podSpec.Containers, ClientRegistrationContainerName) {
-		podSpec.Containers = append(podSpec.Containers, builder.BuildClientRegistrationContainerWithSpireOption(crName, namespace, spireEnabled))
+		podSpec.Containers = append(podSpec.Containers, builder.BuildClientRegistrationContainerWithSpireOption(crName, namespace, spiffeHelperInjected))
 	}
 
-	// Inject volumes — use SPIRE volumes when spireEnabled because both
+	// Inject volumes — use SPIRE volumes when spiffeHelperInjected because both
 	// spiffe-helper AND client-registration mount svid-output in that mode.
 	var requiredVolumes []corev1.Volume
-	if spireEnabled {
+	if spiffeHelperInjected {
 		requiredVolumes = BuildRequiredVolumes()
 	} else {
 		requiredVolumes = BuildRequiredVolumesNoSpire()
@@ -232,7 +228,7 @@ func (m *PodMutator) InjectAuthBridge(ctx context.Context, podSpec *corev1.PodSp
 		"containers", len(podSpec.Containers),
 		"initContainers", len(podSpec.InitContainers),
 		"volumes", len(podSpec.Volumes),
-		"spireEnabled", spireEnabled)
+		"spiffeHelperInjected", spiffeHelperInjected)
 	return true, nil
 }
 
