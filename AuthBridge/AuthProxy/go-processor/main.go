@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"strings"
 	"sync"
 	"time"
@@ -51,6 +52,37 @@ type tokenExchangeResponse struct {
 const defaultRoutesConfigPath = "/etc/authproxy/routes.yaml"
 
 var globalResolver resolver.TargetResolver
+
+// defaultBypassInboundPaths are paths that skip inbound JWT validation by default.
+// These cover common public endpoints: Agent Card discovery, health/readiness probes.
+var defaultBypassInboundPaths = []string{"/.well-known/*", "/healthz", "/readyz", "/livez"}
+
+// bypassInboundPaths holds path patterns that skip inbound JWT validation.
+// Defaults to defaultBypassInboundPaths; override via BYPASS_INBOUND_PATHS env var.
+// Patterns use Go's path.Match syntax (e.g., "/.well-known/*" matches "/.well-known/agent.json").
+var bypassInboundPaths = defaultBypassInboundPaths
+
+// matchBypassPath checks if the given request path matches any configured bypass pattern.
+// Query strings are stripped and the path is normalized before matching.
+func matchBypassPath(requestPath string) bool {
+	// Strip query string if present
+	if idx := strings.IndexByte(requestPath, '?'); idx >= 0 {
+		requestPath = requestPath[:idx]
+	}
+	// Normalize to prevent bypass via non-canonical forms (e.g., //healthz, /./healthz)
+	requestPath = path.Clean(requestPath)
+	for _, pattern := range bypassInboundPaths {
+		matched, err := path.Match(pattern, requestPath)
+		if err != nil {
+			log.Printf("[Inbound] Invalid bypass pattern %q: %v", pattern, err)
+			continue
+		}
+		if matched {
+			return true
+		}
+	}
+	return false
+}
 
 // readFileContent reads the content of a file, trimming whitespace
 func readFileContent(path string) (string, error) {
@@ -325,6 +357,22 @@ func (p *processor) handleInbound(headers *core.HeaderMap) *v3.ProcessingRespons
 		}
 	}
 
+	// Check if the request path matches a bypass pattern
+	if requestPath := getHeaderValue(headers.Headers, ":path"); requestPath != "" && matchBypassPath(requestPath) {
+		log.Printf("[Inbound] Path %q matches bypass pattern, skipping JWT validation", requestPath)
+		return &v3.ProcessingResponse{
+			Response: &v3.ProcessingResponse_RequestHeaders{
+				RequestHeaders: &v3.HeadersResponse{
+					Response: &v3.CommonResponse{
+						HeaderMutation: &v3.HeaderMutation{
+							RemoveHeaders: []string{"x-authbridge-direction"},
+						},
+					},
+				},
+			},
+		}
+	}
+
 	authHeader := getHeaderValue(headers.Headers, "authorization")
 	if authHeader == "" {
 		log.Println("[Inbound] Missing Authorization header")
@@ -546,6 +594,23 @@ func main() {
 			log.Println("[Inbound] ISSUER not configured, inbound JWT validation disabled")
 		}
 	}
+
+	// Initialize inbound bypass paths (override defaults if env var is set)
+	if bypassEnv, ok := os.LookupEnv("BYPASS_INBOUND_PATHS"); ok {
+		bypassInboundPaths = nil
+		for _, p := range strings.Split(bypassEnv, ",") {
+			p = strings.TrimSpace(p)
+			if p == "" {
+				continue
+			}
+			if _, err := path.Match(p, "/"); err != nil {
+				log.Printf("[Inbound] Ignoring invalid bypass path pattern %q: %v", p, err)
+				continue
+			}
+			bypassInboundPaths = append(bypassInboundPaths, p)
+		}
+	}
+	log.Printf("[Inbound] Bypass paths: %v", bypassInboundPaths)
 
 	// Initialize the target resolver
 	configPath := os.Getenv("ROUTES_CONFIG_PATH")
