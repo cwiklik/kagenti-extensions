@@ -218,12 +218,12 @@ kubectl create secret generic github-tool-secrets -n team1 \
 
 ## Step 4: Import the GitHub Tool via Kagenti UI
 
-1. Navigate to [Import New Tool](http://kagenti-ui.localtest.me:8080/tools/import)
+1. Navigate to [Import Tool](http://kagenti-ui.localtest.me:8080/tools/import)
    in the Kagenti UI.
 
-2. Select namespace: `team1`
+2. In the **Namespace** drop-down, choose `team1`.
 
-3. Select **Build from source** as the deployment method.
+3. Select **Build from Source** as the deployment method.
 
 4. Under **Source Code** select:
    - **Git Repository URL**: `https://github.com/kagenti/agent-examples`
@@ -263,47 +263,46 @@ Shipwright build. Wait for it to complete.
 
 ## Step 5: Import the GitHub Issue Agent via Kagenti UI
 
-1. Navigate to [Import New Agent](http://kagenti-ui.localtest.me:8080/Import_New_Agent#import-new-agent)
+1. Navigate to [Import Agent](http://kagenti-ui.localtest.me:8080/agents/import)
    in the Kagenti UI.
 
-2. In the **Select Namespace to Deploy Agent** drop-down, choose `team1`.
+2. In the **Namespace** drop-down, choose `team1`.
 
-3. Under **Select Environment Variable Sets**, select the LLM provider:
-   - `ollama` for local LLM, or `openai` for OpenAI
+3. Select **Build from Source** as the deployment method.
 
-4. Click `Import .env File` and provide:
-   - **GitHub Repository URL:** `https://github.com/kagenti/agent-examples/`
-   - **Path to .env file:**
-     - For Ollama: `a2a/git_issue_agent/.env.ollama`
-     - For OpenAI: `a2a/git_issue_agent/.env.openai`
-   - Click **Import** — this populates the agent's environment variables.
+4. Under **Source Repository** select:
+   - **Git Repository URL**: `https://github.com/kagenti/agent-examples`
+   - **Git Branch**: `main`
+   - **Select Example**: `Git Issue Agent`
+   - **Source Path**: `a2a/git_issue_agent`
 
-5. **Add/update the following environment variables** for AuthBridge integration:
+5. **Protocol**: `A2A`
 
-   | Variable | Value | Purpose |
-   |----------|-------|---------|
-   | `MCP_URL` | `http://github-tool-service:9090/mcp` | GitHub tool endpoint |
-   | `JWKS_URI` | `http://keycloak-service.keycloak.svc:8080/realms/demo/protocol/openid-connect/certs` | Token validation |
+6. **Framework**: `LangGraph`
 
-   If using OpenAI, also ensure these are set:
+7. **Workload Type** select `Deployment`.
 
-   | Variable | Value |
-   |----------|-------|
-   | `LLM_API_KEY` | Your OpenAI API key (or reference `openai-secret`) |
-   | `OPENAI_API_KEY` | Same as `LLM_API_KEY` |
+8. Under **Port Configuration**, set **Service Port** to `8080` and **Target Port** to `8000`
 
-6. In the **Deployment Method** select `Build from Source`.
+9. Under **Environment Variables**, click **Import from File/URL**,
+   Select **From URL** and provide the **URL** from this repo:
+    - For Ollama: `https://raw.githubusercontent.com/kagenti/agent-examples/refs/heads/main/a2a/git_issue_agent/.env.ollama`
+    - For OpenAI: `https://raw.githubusercontent.com/kagenti/agent-examples/refs/heads/main/a2a/git_issue_agent/.env.openai`
+    - Click **Fetch & Parse** — this populates all environment variables including
+     LLM settings, `MCP_URL`, and `JWKS_URI`. No manual editing is needed.
 
-7. For **Agent Source Repository URL**, use: `https://github.com/kagenti/agent-examples`
+   The Ollama variant sets all direct values. The OpenAI variant includes
+   **Secret** type entries referencing `openai-secret` for `LLM_API_KEY`
+   and `OPENAI_API_KEY`.
 
-8. For **Git Branch or Tag**, use `main`.
+   > **Tip:** You can also upload the file directly from your local system.
+   > **OpenAI prerequisite:** If using OpenAI, create the secret first:
+   > ```bash
+   > kubectl create secret generic openai-secret -n team1 \
+   >   --from-literal=apikey="<YOUR_OPENAI_API_KEY>"
+   > ```
 
-9. In **Container Registry Configuration**, select the default, then set **Protocol** to `a2a`.
-
-10. Under **Specify Source Subfolder**, click `Select from examples` and choose:
-    `a2a/git_issue_agent`
-
-11. Click **Build & Deploy New Agent**.
+10. Click **Build & Deploy Agent**.
 
 Wait for the Shipwright build to complete and the deployment to become ready.
 
@@ -332,17 +331,24 @@ github-tool-7f8c9d6b44-yyyyy      1/1     Running   0          5m
 ### Verify injected containers
 
 ```bash
-kubectl get pod -n team1 -l app=git-issue-agent -o jsonpath='{.items[0].spec.containers[*].name}'
+kubectl get pod -n team1 -l app.kubernetes.io/name=git-issue-agent -o jsonpath='{.items[0].spec.containers[*].name}'
 ```
 
-Expected:
+Expected (with SPIRE):
 
 ```
 agent spiffe-helper kagenti-client-registration envoy-proxy
 ```
 
+Expected (without SPIRE):
+
+```
+agent kagenti-client-registration envoy-proxy
+```
+
 > **Note:** When deployed via the Kagenti UI, the main container is named `agent`
-> (not `git-issue-agent` as in the manual deployment).
+> (not `git-issue-agent` as in the manual deployment), and labels use
+> `app.kubernetes.io/name` instead of `app`.
 
 ### Check client registration
 
