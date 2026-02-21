@@ -429,12 +429,16 @@ INFO:     Application startup complete.
 INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
 ```
 
+<!-- WORKAROUND: Remove this warning note once kagenti/agent-examples#129 is fixed. -->
+
 > **These warnings are expected and harmless.** The agent's built-in auth code
 > probes for SVID and client-secret files at startup. With AuthBridge, these files
 > are used by the sidecars (spiffe-helper, client-registration, Envoy), not by the
 > agent container directly. The agent falls back to JWKS-based JWT validation
 > (`JWKS_URI is set`), which is the correct behavior — AuthBridge's Envoy sidecar
 > handles inbound JWT validation and outbound token exchange on behalf of the agent.
+> These warnings will be removed once the agent's built-in auth logic is cleaned up
+> ([kagenti/agent-examples#129](https://github.com/kagenti/agent-examples/issues/129)).
 
 ### Verify Ollama is running
 
@@ -518,7 +522,7 @@ WRONG_ISSUER_TOKEN=$(kubectl exec test-client -n team1 -- curl -s \
 
 kubectl exec test-client -n team1 -- curl -s \
   -H "Authorization: Bearer $WRONG_ISSUER_TOKEN" \
-  http://git-issue-agent-service:8000/
+  http://git-issue-agent:8080/
 # Expected: {"error":"unauthorized","message":"token validation failed: invalid issuer: expected http://keycloak.localtest.me:8080/realms/demo, got ..."}
 ```
 

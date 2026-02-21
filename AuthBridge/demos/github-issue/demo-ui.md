@@ -240,8 +240,9 @@ kubectl create secret generic github-tool-secrets -n team1 \
 8. Under **Environment Variables**, click **Import from File/URL**,
    Select **From URL** and provide the `.env` file from this repo:
    - **URL** `https://raw.githubusercontent.com/kagenti/agent-examples/refs/heads/main/mcp/github_tool/.env.authbridge`
-   - Click **Fetch &Parse** — this populates all environment variables, including
+   - Click **Fetch & Parse** — this populates all environment variables, including
      Secret references for the PAT tokens and direct values for Keycloak settings.
+   - Click **Import** to set all the env. variables.
 
    The imported variables will show three **Secret** type entries referencing
    `github-tool-secrets` and three **Direct Value** entries for Keycloak configuration.
@@ -258,6 +259,72 @@ Shipwright build. Wait for it to complete.
 > in the `agent-examples` repo need fully qualified image names. This was fixed in
 > [kagenti/agent-examples#125](https://github.com/kagenti/agent-examples/pull/125)
 > (merged). If you're on an older branch, rebase onto `main`.
+
+### Patch: Remove AuthBridge sidecars from the tool
+
+<!-- WORKAROUND: Remove this entire patch section once kagenti-extensions#138 is fixed. -->
+
+> **Known issue ([kagenti-extensions#138](https://github.com/kagenti/kagenti-extensions/issues/138)):**
+> The webhook injects AuthBridge sidecars into the tool deployment even though the
+> tool should not have them. The go-processor (ext_proc) gRPC server and the GitHub
+> tool's MCP server both bind to port 9090, causing a port conflict that makes the
+> tool unreachable (agent gets "Couldn't connect to the MCP server").
+
+Remove the sidecars by temporarily disabling the webhook, redeploying clean, then
+restoring:
+
+```bash
+# 1. Disable the webhook
+kubectl scale deployment kagenti-webhook-controller-manager \
+  -n kagenti-webhook-system --replicas=0
+kubectl patch mutatingwebhookconfiguration \
+  kagenti-webhook-authbridge-mutating-webhook-configuration \
+  --type='json' -p='[{"op":"replace","path":"/webhooks/0/failurePolicy","value":"Ignore"}]'
+
+# 2. Delete and recreate the tool without sidecars
+kubectl get deployment github-tool -n team1 -o json | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+spec = d['spec']['template']['spec']
+spec['containers'] = [c for c in spec['containers'] if c['name'] == 'mcp']
+spec.pop('initContainers', None)
+injected = {'envoy-config','shared-data','svid-output','spire-agent-socket','spiffe-helper-config'}
+spec['volumes'] = [v for v in spec.get('volumes',[]) if v['name'] not in injected]
+if not spec.get('volumes'): spec.pop('volumes', None)
+for c in spec['containers']:
+    if 'volumeMounts' in c:
+        c['volumeMounts'] = [vm for vm in c['volumeMounts'] if vm['name'] not in injected]
+        if not c['volumeMounts']: del c['volumeMounts']
+d['spec']['template']['metadata']['labels']['kagenti.io/inject'] = 'disabled'
+for k in ['resourceVersion','uid','creationTimestamp','generation','managedFields']:
+    d['metadata'].pop(k, None)
+d.pop('status', None)
+d['metadata'].pop('annotations', None)
+d['spec']['template']['metadata'].pop('annotations', None)
+json.dump(d, sys.stdout)
+" > /tmp/github-tool-clean.json
+
+kubectl delete deployment github-tool -n team1
+sleep 2
+kubectl create -f /tmp/github-tool-clean.json
+
+# 3. Wait for clean rollout
+kubectl rollout status deployment/github-tool -n team1 --timeout=60s
+
+# 4. Restore the webhook
+kubectl scale deployment kagenti-webhook-controller-manager \
+  -n kagenti-webhook-system --replicas=1
+kubectl patch mutatingwebhookconfiguration \
+  kagenti-webhook-authbridge-mutating-webhook-configuration \
+  --type='json' -p='[{"op":"replace","path":"/webhooks/0/failurePolicy","value":"Fail"}]'
+```
+
+Verify the tool is running with only 1 container:
+
+```bash
+kubectl get pods -n team1 | grep github-tool
+# Expected: github-tool-xxxxx   1/1   Running   0   ...
+```
 
 ---
 
@@ -290,6 +357,7 @@ Shipwright build. Wait for it to complete.
     - For OpenAI: `https://raw.githubusercontent.com/kagenti/agent-examples/refs/heads/main/a2a/git_issue_agent/.env.openai`
     - Click **Fetch & Parse** — this populates all environment variables including
      LLM settings, `MCP_URL`, and `JWKS_URI`. No manual editing is needed.
+    - Click **Import** to set all the env. variables.
 
    The Ollama variant sets all direct values. The OpenAI variant includes
    **Secret** type entries referencing `openai-secret` for `LLM_API_KEY`
@@ -423,12 +491,16 @@ INFO:     Application startup complete.
 INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
 ```
 
+<!-- WORKAROUND: Remove this warning note once kagenti/agent-examples#129 is fixed. -->
+
 > **These warnings are expected and harmless.** The agent's built-in auth code
 > probes for SVID and client-secret files at startup. With AuthBridge, these files
 > are used by the sidecars (spiffe-helper, client-registration, Envoy), not by the
 > agent container directly. The agent falls back to JWKS-based JWT validation
 > (`JWKS_URI is set`), which is the correct behavior — AuthBridge's Envoy sidecar
 > handles inbound JWT validation and outbound token exchange on behalf of the agent.
+> These warnings will be removed once the agent's built-in auth logic is cleaned up
+> ([kagenti/agent-examples#129](https://github.com/kagenti/agent-examples/issues/129)).
 
 ### Check the service endpoint
 
