@@ -84,59 +84,6 @@ This automatically:
 2. Creates the namespace with `kagenti-enabled=true` label
 3. Applies all required ConfigMaps (environments, authbridge-config, envoy-config, spiffe-helper-config)
 
-Then continue with:
-- [Step 1: Setup Keycloak](#step-1-setup-keycloak) - Configure Keycloak clients and scopes
-- [Step 3: Deploy Auth Target and Agent](#step-3-deploy-auth-target-and-agent) - Deploy the demo workloads
-- [Step 4: Enable Service Accounts](#step-4-enable-service-accounts-one-time-setup) - Enable client_credentials grant
-- [Step 5: Test Token Exchange](#step-5-test-token-exchange) - Verify the flow works
-
----
-
-## Demo Deployment Steps
-
-### Step 1: Setup Keycloak
-
-Run the Keycloak setup script to configure the realm, clients, and scopes:
-
-```bash
-cd AuthBridge
-
-# Activate virtual environment
-source venv/bin/activate
-
-# Run setup for webhook deployment (default: team1 namespace, agent service account)
-python setup_keycloak.py
-```
-
-Or specify custom namespace/service account:
-
-```bash
-python setup_keycloak.py --namespace myapp --service-account mysa
-```
-
-This creates:
-
-- `auth-target` client (target audience for token exchange)
-- `agent-<namespace>-<sa>-aud` scope (adds agent's SPIFFE ID to token audience)
-- `auth-target-aud` scope (adds "auth-target" to exchanged tokens)
-- `alice` demo user (for testing subject preservation)
-
-### Step 2: Create Namespace and ConfigMaps (Optional - already done for team1 by webhook-rollout.sh)
-
-The `team1` namespace and all the configmaps are deployed during `./scripts/webhook-rollout.sh`
-script execution.
-
-```bash
-# Create namespace if it doesn't exist
-kubectl create namespace team1 --dry-run=client -o yaml | kubectl apply -f -
-
-# Label namespace for webhook injection
-kubectl label namespace team1 kagenti-enabled=true --overwrite
-
-# Apply all required ConfigMaps
-kubectl apply -f k8s/configmaps-webhook.yaml
-```
-
 **Note for custom deployments:** If deploying to a different namespace or using a different service account, update the `EXPECTED_AUDIENCE` value in `configmaps-webhook.yaml` to match your agent's SPIFFE ID:
 ```yaml
 EXPECTED_AUDIENCE: "spiffe://localtest.me/ns/<your-namespace>/sa/<your-service-account>"
@@ -154,7 +101,60 @@ The ConfigMaps include:
 - `spiffe-helper-config` - SPIFFE helper configuration (for SPIRE mode)
 - `envoy-config` - Envoy proxy configuration
 
-### Step 3: Deploy Auth Target and Agent
+## Labels Reference
+
+| Label | Value | Description |
+|-------|-------|-------------|
+| `kagenti.io/type` | `agent` | **Required**: Identifies workload as an agent |
+| `kagenti.io/inject` | `enabled` | Enable AuthBridge sidecar injection |
+| `kagenti.io/inject` | `disabled` | Disable injection (for target services) |
+| `kagenti.io/spire` | `enabled` | Enable SPIFFE-based identity with SPIRE |
+| `kagenti.io/spire` | `disabled` | Use static client ID (no SPIRE) |
+
+**Note**: All labels must be on the **Pod template** (`spec.template.metadata.labels`), not the Deployment metadata.
+
+Then continue with:
+- [Step 1: Setup Keycloak](#step-1-setup-keycloak) - Configure Keycloak clients and scopes
+- [Step 2: Deploy Auth Target and Agent](#step-2-deploy-auth-target-and-agent) - Deploy the demo workloads
+- [Step 3: Test Token Exchange](#step-3-test-the-flow) - Verify the flow works
+
+---
+
+## Demo Deployment Steps
+
+### Step 1: Setup Keycloak
+
+Run the Keycloak setup script to configure the realm, clients, and scopes:
+
+```bash
+cd AuthBridge
+
+# Activate virtual environment
+python -m venv venv
+source venv/bin/activate
+
+pip install --upgrade pip
+pip install -r requirements.txt
+
+cd demos/webhook
+# Run setup for webhook deployment (default: team1 namespace, agent service account)
+python setup_keycloak.py
+```
+
+Or specify custom namespace/service account:
+
+```bash
+python setup_keycloak.py --namespace myapp --service-account mysa
+```
+
+This creates:
+
+- `auth-target` client (target audience for token exchange)
+- `agent-<namespace>-<sa>-aud` scope (adds agent's SPIFFE ID to token audience)
+- `auth-target-aud` scope (adds "auth-target" to exchanged tokens)
+- `alice` demo user (for testing subject preservation)
+
+### Step 2: Deploy Auth Target and Agent
 
 Deploy the target service and agent workload:
 
@@ -184,35 +184,7 @@ kubectl get pod -n team1 -l app=agent -o jsonpath='{.items[0].spec.containers[*]
 # Expected (without SPIFFE): agent kagenti-client-registration envoy-proxy
 ```
 
-## Step 4: Enable Service Accounts (One-time Setup)
-
-The dynamically registered client needs service accounts enabled for `client_credentials` grant:
-
-```bash
-kubectl exec deployment/agent -n team1 -c agent -- sh -c '
-CLIENT_ID=$(cat /shared/client-id.txt)
-
-# Get admin token
-ADMIN_TOKEN=$(curl -s http://keycloak-service.keycloak.svc:8080/realms/master/protocol/openid-connect/token \
-  -d "grant_type=password" \
-  -d "client_id=admin-cli" \
-  -d "username=admin" \
-  -d "password=admin" | jq -r ".access_token")
-
-# Get internal client ID
-INTERNAL_ID=$(curl -s -H "Authorization: Bearer $ADMIN_TOKEN" \
-  "http://keycloak-service.keycloak.svc:8080/admin/realms/demo/clients?clientId=$CLIENT_ID" | jq -r ".[0].id")
-
-# Enable service accounts
-curl -s -X PUT -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
-  "http://keycloak-service.keycloak.svc:8080/admin/realms/demo/clients/$INTERNAL_ID" \
-  -d "{\"clientId\": \"$CLIENT_ID\", \"serviceAccountsEnabled\": true}"
-
-echo "Service accounts enabled for: $CLIENT_ID"
-'
-```
-
-## Step 5: Test the Flow
+## Step 3: Test the Flow
 
 These tests verify both **inbound** JWT validation and **outbound** token exchange end-to-end. By sending requests from outside the agent pod, each request exercises the full pipeline:
 
@@ -349,17 +321,14 @@ kubectl logs deployment/agent -n team1 -c spiffe-helper
 
 ### Common Issues
 
-1. **"Client not enabled to retrieve service account"**
-   - Run Step 4 to enable service accounts for the dynamically registered client
-
-2. **"Requested audience not available: auth-target"**
+1. **"Requested audience not available: auth-target"**
    - Ensure `TARGET_SCOPES` in `authbridge-config` includes `auth-target-aud`
-   - Run `setup_keycloak.py` to create the required scopes
+   - Run `setup_keycloak.py` again to create the required scopes
 
-3. **ConfigMap not found errors**
+2. **ConfigMap not found errors**
    - Apply `k8s/configmaps-webhook.yaml` to the target namespace
 
-4. **Image pull errors**
+3. **Image pull errors**
    - Images are automatically pulled from `ghcr.io/kagenti/kagenti-extensions/`
    - If you need to build locally for development:
      ```bash
@@ -371,32 +340,9 @@ kubectl logs deployment/agent -n team1 -c spiffe-helper
      ```
    - Update `container_builder.go` to use `localhost/` images if testing locally
 
-5. **SPIFFE credentials not ready**
+4. **SPIFFE credentials not ready**
    - Ensure SPIRE is deployed and the workload is registered
    - Check spiffe-helper logs for connection issues
-
-## Labels Reference
-
-| Label | Value | Description |
-|-------|-------|-------------|
-| `kagenti.io/type` | `agent` | **Required**: Identifies workload as an agent |
-| `kagenti.io/inject` | `enabled` | Enable AuthBridge sidecar injection |
-| `kagenti.io/inject` | `disabled` | Disable injection (for target services) |
-| `kagenti.io/spire` | `enabled` | Enable SPIFFE-based identity with SPIRE |
-| `kagenti.io/spire` | `disabled` | Use static client ID (no SPIRE) |
-
-**Note**: All labels must be on the **Pod template** (`spec.template.metadata.labels`), not the Deployment metadata.
-
-## Files Reference
-
-| File | Description |
-|------|-------------|
-| `k8s/configmaps-webhook.yaml` | All required ConfigMaps |
-| `k8s/agent-deployment-webhook.yaml` | Agent deployment with SPIFFE (webhook labels) |
-| `k8s/agent-deployment-webhook-no-spiffe.yaml` | Agent deployment without SPIFFE (static client ID) |
-| `k8s/auth-target-deployment-webhook.yaml` | Auth target deployment (no injection) |
-| `setup_keycloak.py` | Keycloak setup script for webhook deployments |
-| `../../../kagenti-webhook/scripts/webhook-rollout.sh` | Automated deployment script (use with `AUTHBRIDGE_DEMO=true`) |
 
 ## Cleanup
 
