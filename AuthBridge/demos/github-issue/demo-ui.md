@@ -106,7 +106,7 @@ ext_proc (port 9090) performs three checks on the `Authorization: Bearer <token>
 
 Requests that fail any check receive an immediate `401 Unauthorized` response from
 Envoy — the agent application never sees them. This is tested in
-[Step 9a–9b](#step-9-test-via-cli-optional).
+[Step 9b–9c](#step-9-test-via-cli-optional).
 
 ---
 
@@ -239,7 +239,7 @@ kubectl create secret generic github-tool-secrets -n team1 \
 
 8. Under **Environment Variables**, click **Import from File/URL**,
    Select **From URL** and provide the `.env` file from this repo:
-   - **URL** `https://raw.githubusercontent.com/kagenti/agent-examples/refs/heads/main/mcp/github_tool/.env.openai`
+   - **URL** `https://raw.githubusercontent.com/kagenti/agent-examples/refs/heads/main/mcp/github_tool/.env.authbridge`
    - Click **Fetch &Parse** — this populates all environment variables, including
      Secret references for the PAT tokens and direct values for Keycloak settings.
 
@@ -306,6 +306,42 @@ Shipwright build. Wait for it to complete.
 
 Wait for the Shipwright build to complete and the deployment to become ready.
 
+### Patch: Enable SPIRE identity
+
+> **Known issue:** The Kagenti UI drops the `kagenti.io/spire: enabled` label on the
+> final deployment pass ([kagenti/kagenti#738](https://github.com/kagenti/kagenti/issues/738)),
+> causing the webhook to inject sidecars without SPIRE support. Until this is fixed,
+> apply the following patch after the UI deploys the agent.
+
+**1. Create the service account** (SPIRE identity is derived from the pod's SA):
+
+```bash
+kubectl create sa git-issue-agent -n team1
+```
+
+**2. Patch the deployment** to add spiffe-helper, SPIRE volumes, and the SPIRE-aware
+client-registration script:
+
+```bash
+kubectl patch deployment git-issue-agent -n team1 --type=json -p '[
+  {"op":"add","path":"/spec/template/spec/serviceAccountName","value":"git-issue-agent"},
+  {"op":"replace","path":"/spec/template/metadata/labels/kagenti.io~1spire","value":"enabled"},
+  {"op":"replace","path":"/spec/template/spec/containers/1/env/0/value","value":"true"},
+  {"op":"replace","path":"/spec/template/spec/containers/1/command","value":["/bin/sh","-c","\necho \"Waiting for SPIFFE credentials...\"\nwhile [ ! -f /opt/jwt_svid.token ]; do\n  echo \"waiting for SVID\"\n  sleep 1\ndone\necho \"SPIFFE credentials ready!\"\nJWT_PAYLOAD=$(cat /opt/jwt_svid.token | cut -d\".\" -f2)\nif ! CLIENT_ID=$(echo \"${JWT_PAYLOAD}==\" | base64 -d | python -c \"import sys,json; print(json.load(sys.stdin).get(\\\"sub\\\",\\\"\\\"))\"); then\n  echo \"Error: Failed to decode JWT payload or extract client ID\" >&2\n  exit 1\nfi\nif [ -z \"$CLIENT_ID\" ]; then\n  echo \"Error: Extracted client ID is empty\" >&2\n  exit 1\nfi\necho \"$CLIENT_ID\" > /shared/client-id.txt\necho \"Client ID (SPIFFE ID): $CLIENT_ID\"\necho \"Starting client registration...\"\npython client_registration.py\necho \"Client registration complete!\"\ntail -f /dev/null\n"]},
+  {"op":"add","path":"/spec/template/spec/containers/1/volumeMounts/-","value":{"name":"svid-output","mountPath":"/opt"}},
+  {"op":"add","path":"/spec/template/spec/volumes/-","value":{"name":"spire-agent-socket","csi":{"driver":"csi.spiffe.io","readOnly":true}}},
+  {"op":"add","path":"/spec/template/spec/volumes/-","value":{"name":"spiffe-helper-config","configMap":{"name":"spiffe-helper-config"}}},
+  {"op":"add","path":"/spec/template/spec/volumes/-","value":{"name":"svid-output","emptyDir":{}}},
+  {"op":"add","path":"/spec/template/spec/containers/-","value":{"name":"spiffe-helper","image":"ghcr.io/spiffe/spiffe-helper:nightly","command":["/spiffe-helper","-config=/etc/spiffe-helper/helper.conf","run"],"securityContext":{"runAsUser":1000,"runAsGroup":1000},"volumeMounts":[{"name":"spiffe-helper-config","mountPath":"/etc/spiffe-helper"},{"name":"spire-agent-socket","mountPath":"/spiffe-workload-api"},{"name":"svid-output","mountPath":"/opt"},{"name":"shared-data","mountPath":"/shared"}]}}
+]'
+```
+
+**3. Wait for the rollout:**
+
+```bash
+kubectl rollout status deployment/git-issue-agent -n team1 --timeout=120s
+```
+
 ---
 
 ## Step 6: Verify the Deployment
@@ -334,13 +370,13 @@ github-tool-7f8c9d6b44-yyyyy      1/1     Running   0          5m
 kubectl get pod -n team1 -l app.kubernetes.io/name=git-issue-agent -o jsonpath='{.items[0].spec.containers[*].name}'
 ```
 
-Expected (with SPIRE):
+Expected (after applying the SPIRE patch above):
 
 ```
-agent spiffe-helper kagenti-client-registration envoy-proxy
+agent kagenti-client-registration envoy-proxy spiffe-helper
 ```
 
-Expected (without SPIRE):
+If the SPIRE patch was not applied, you will see only 3 containers:
 
 ```
 agent kagenti-client-registration envoy-proxy
@@ -374,11 +410,22 @@ kubectl logs deployment/git-issue-agent -n team1 -c agent
 Expected:
 
 ```
+SVID JWT file /opt/jwt_svid.token not found.
+SVID JWT file /opt/jwt_svid.token not found.
+CLIENT_SECRET file not found at /shared/secret.txt
+INFO: JWKS_URI is set - using JWT Validation middleware
 INFO:     Started server process [17]
 INFO:     Waiting for application startup.
 INFO:     Application startup complete.
 INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
 ```
+
+> **These warnings are expected and harmless.** The agent's built-in auth code
+> probes for SVID and client-secret files at startup. With AuthBridge, these files
+> are used by the sidecars (spiffe-helper, client-registration, Envoy), not by the
+> agent container directly. The agent falls back to JWKS-based JWT validation
+> (`JWKS_URI is set`), which is the correct behavior — AuthBridge's Envoy sidecar
+> handles inbound JWT validation and outbound token exchange on behalf of the agent.
 
 ### Check the service endpoint
 
@@ -455,26 +502,40 @@ kubectl run test-client --image=nicolaka/netshoot -n team1 --restart=Never -- sl
 kubectl wait --for=condition=ready pod/test-client -n team1 --timeout=30s
 ```
 
-### 9a. Inbound Rejection - No Token
+### 9a. Agent Card - Public Endpoint (No Token Required)
+
+The `/.well-known/agent.json` endpoint is publicly accessible — AuthBridge's
+go-processor [bypasses JWT validation](https://github.com/kagenti/kagenti-extensions/pull/133)
+for `/.well-known/*`, `/healthz`, `/readyz`, and `/livez` by default:
 
 ```bash
 kubectl exec test-client -n team1 -- curl -s \
-  http://git-issue-agent:8080/.well-known/agent.json
+  http://git-issue-agent:8080/.well-known/agent.json | jq .name
+# Expected: "Github issue agent"
+```
+
+### 9b. Inbound Rejection - No Token
+
+Non-public endpoints require a valid JWT:
+
+```bash
+kubectl exec test-client -n team1 -- curl -s \
+  http://git-issue-agent:8080/
 # Expected: {"error":"unauthorized","message":"missing Authorization header"}
 ```
 
-### 9b. Inbound Rejection - Invalid Token (Signature Check)
+### 9c. Inbound Rejection - Invalid Token (Signature Check)
 
 A malformed or tampered token fails the JWKS signature check:
 
 ```bash
 kubectl exec test-client -n team1 -- curl -s \
   -H "Authorization: Bearer invalid-token" \
-  http://git-issue-agent:8080/.well-known/agent.json
+  http://git-issue-agent:8080/
 # Expected: {"error":"unauthorized","message":"token validation failed: failed to parse/validate token: ..."}
 ```
 
-### 9c. End-to-End Test with Valid Token
+### 9d. End-to-End Test with Valid Token
 
 Open a shell inside the test-client pod to avoid JWT shell expansion issues:
 
@@ -506,9 +567,9 @@ CLIENT_ID=$(echo "$CLIENTS" | jq -r ".[0].clientId")
 echo "Internal ID:   $INTERNAL_ID"
 echo "Client ID:     $CLIENT_ID"
 
-# Get the client secret
-CLIENT_SECRET=$(curl -s -H "Authorization: Bearer $ADMIN_TOKEN" \
-  "http://keycloak-service.keycloak.svc:8080/admin/realms/demo/clients/$INTERNAL_ID/client-secret" | jq -r ".value")
+# Get the client secret (extract directly from the client listing;
+# the /client-secret endpoint may return null for auto-registered clients)
+CLIENT_SECRET=$(echo "$CLIENTS" | jq -r ".[0].secret")
 
 echo "Secret length: ${#CLIENT_SECRET}"
 
@@ -546,7 +607,7 @@ Exit the pod when done:
 exit
 ```
 
-### 9d. Verify AuthProxy Logs (Inbound + Outbound)
+### 9e. Verify AuthProxy Logs (Inbound + Outbound)
 
 Check the ext_proc logs to confirm both inbound validation and outbound token
 exchange are working:
