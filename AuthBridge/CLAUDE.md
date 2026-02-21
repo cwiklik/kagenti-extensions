@@ -35,17 +35,19 @@ AuthBridge/
 │   ├── single-target/                #   Single agent → target (SPIFFE-based)
 │   │   ├── demo.md
 │   │   ├── setup_keycloak.py
-│   │   └── k8s/                      #   Manifests including configmaps-webhook.yaml
+│   │   └── k8s/
 │   ├── multi-target/                 #   Multi-target with keycloak_sync
 │   │   └── k8s/
-│   └── github-issue/                 #   GitHub integration demo
-│       ├── demo.md, demo-manual.md
+│   ├── github-issue/                 #   GitHub integration demo
+│   │   ├── demo.md, demo-manual.md
+│   │   ├── setup_keycloak.py
+│   │   └── k8s/
+│   └── webhook/                      #   Webhook-based injection demo
+│       ├── README.md                 #     Webhook injection walkthrough
 │       ├── setup_keycloak.py
-│       └── k8s/
+│       └── k8s/                      #     Manifests including configmaps-webhook.yaml
 │
-├── keycloak_sync.py                  # Declarative Keycloak sync tool (routes.yaml driven)
-├── demo-webhook.md                   # Webhook-based injection walkthrough
-└── setup_keycloak-webhook.py         # Keycloak setup for webhook deployments
+└── keycloak_sync.py                  # Declarative Keycloak sync tool (routes.yaml driven)
 ```
 
 ## Component Details
@@ -127,9 +129,10 @@ Envoy config lives in `demos/webhook/k8s/configmaps-webhook.yaml` (the `envoy-co
 
 ## Demo Scenarios
 
-The `demos/` directory contains three demonstration scenarios:
+The `demos/` directory contains four demonstration scenarios:
 
-- **single-target/** -- Primary demo showing agent → target communication with SPIFFE identity and token exchange. Recommended starting point.
+- **webhook/** -- Shows how to use the kagenti-webhook to automatically inject AuthBridge sidecars. Recommended starting point for webhook-based deployments.
+- **single-target/** -- Manual deployment demo showing agent → target communication with SPIFFE identity and token exchange.
 - **multi-target/** -- Dynamic scope assignment using `keycloak_sync.py` for agents communicating with multiple targets.
 - **github-issue/** -- External API integration (GitHub) using AuthBridge for transparent authentication.
 
@@ -139,9 +142,9 @@ There are **four** setup scripts for different demo scenarios:
 
 | Script | Location | Use Case |
 |--------|----------|----------|
+| `setup_keycloak.py` | `AuthBridge/demos/webhook/` | Webhook-injected deployments (parameterized namespace/SA, creates realm, auth-target client, agent-spiffe-aud + auth-target-aud scopes, alice user) |
 | `setup_keycloak.py` | `AuthBridge/demos/single-target/` | Single-target SPIFFE demo (creates realm, auth-target client, agent-spiffe-aud + auth-target-aud scopes, alice user) |
 | `setup_keycloak.py` | `AuthBridge/demos/github-issue/` | GitHub issue integration demo (creates github-tool client, github-tool-aud + github-full-access scopes, alice + bob users) |
-| `setup_keycloak-webhook.py` | `AuthBridge/` | Webhook-injected deployments (parameterized namespace/SA, creates same resources as single-target with dynamic SPIFFE ID) |
 | `setup_keycloak.py` | `AuthBridge/AuthProxy/quickstart/` | Standalone AuthProxy quickstart without SPIFFE (creates application-caller, authproxy, demoapp clients with per-client scope assignment) |
 
 **Common Keycloak defaults across all scripts:**

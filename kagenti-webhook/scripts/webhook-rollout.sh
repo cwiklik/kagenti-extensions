@@ -247,7 +247,7 @@ if [ "${AUTHBRIDGE_DEMO}" = "true" ]; then
     echo "AuthBridge Prerequisites Ready!"
     echo "=========================================="
     echo ""
-    echo "See AuthBridge/demo-webhook.md for next steps"
+    echo "See AuthBridge/demos/webhook/README.md for next steps"
 fi
 
 echo ""
