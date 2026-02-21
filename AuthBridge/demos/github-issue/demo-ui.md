@@ -255,9 +255,9 @@ You will be redirected to a **Build Progress** page where you can monitor the
 Shipwright build. Wait for it to complete.
 
 > **Note:** If the build fails with `short-name resolution enforced`, the Dockerfiles
-> in the `agent-examples` repo need fully qualified image names. See
-> [PR #125](https://github.com/kagenti/agent-examples/pull/125) for the fix.
-> As a workaround, use the branch `fix/dockerfile-fqdn-image-names` instead of `main`.
+> in the `agent-examples` repo need fully qualified image names. This was fixed in
+> [kagenti/agent-examples#125](https://github.com/kagenti/agent-examples/pull/125)
+> (merged). If you're on an older branch, rebase onto `main`.
 
 ---
 
@@ -307,6 +307,9 @@ Shipwright build. Wait for it to complete.
 Wait for the Shipwright build to complete and the deployment to become ready.
 
 ### Patch: Enable SPIRE identity
+
+<!-- WORKAROUND: Remove this entire "Patch: Enable SPIRE identity" section
+     (through "Wait for the rollout") once kagenti/kagenti#738 is fixed. -->
 
 > **Known issue:** The Kagenti UI drops the `kagenti.io/spire: enabled` label on the
 > final deployment pass ([kagenti/kagenti#738](https://github.com/kagenti/kagenti/issues/738)),
@@ -382,9 +385,9 @@ If the SPIRE patch was not applied, you will see only 3 containers:
 agent kagenti-client-registration envoy-proxy
 ```
 
-> **Note:** When deployed via the Kagenti UI, the main container is named `agent`
-> (not `git-issue-agent` as in the manual deployment), and labels use
-> `app.kubernetes.io/name` instead of `app`.
+> **Note:** Both the UI and manual deployments use the same naming conventions:
+> container name `agent`, labels `app.kubernetes.io/name: git-issue-agent`,
+> and service `git-issue-agent:8080`.
 
 ### Check client registration
 
@@ -429,19 +432,18 @@ INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
 
 ### Check the service endpoint
 
-The Kagenti UI creates the service with its own naming convention:
-
 ```bash
 kubectl get svc -n team1 | grep git-issue-agent
 ```
 
-Expected (UI-created service):
+Expected:
 
 ```
 git-issue-agent   ClusterIP   10.96.x.x   <none>   8080/TCP   5m
 ```
 
-The UI maps **port 8080** to the agent's internal port 8000.
+The service maps **port 8080** to the agent's internal port 8000 (same for both
+UI and manual deployments).
 
 ---
 
@@ -484,15 +486,8 @@ This is the primary way to interact with the agent when using the UI deployment.
 You can also test the AuthBridge flow from the command line to verify inbound
 validation and token exchange.
 
-> **Note:** The Kagenti UI creates services with different names/ports than the manual
-> deployment. Verify the actual service name and port before testing:
->
-> ```bash
-> kubectl get svc -n team1 | grep git-issue-agent
-> ```
->
-> The UI typically creates `git-issue-agent:8080`. The commands below use this convention.
-> If your service is named differently, adjust accordingly.
+> **Note:** The CLI test commands below use the same service name and port
+> (`git-issue-agent:8080`) as both the UI and manual deployments.
 
 ### Setup
 
@@ -658,7 +653,7 @@ If the agent is missing environment variables after UI deployment (e.g., `MCP_UR
 ```bash
 # Set missing env vars on the agent container
 kubectl set env deployment/git-issue-agent -n team1 -c agent \
-  MCP_URL="http://github-tool-service:9090/mcp" \
+  MCP_URL="http://github-tool-mcp:9090/mcp" \
   JWKS_URI="http://keycloak-service.keycloak.svc:8080/realms/demo/protocol/openid-connect/certs"
 
 # If using OpenAI and the key is in a secret:
@@ -717,13 +712,16 @@ kubectl rollout restart deployment/git-issue-agent -n team1
 
 ### Build Fails: "short-name resolution enforced"
 
+<!-- WORKAROUND: Remove this section once all agent-examples Dockerfiles use FQDN images.
+     Fixed in kagenti/agent-examples#125 (merged). -->
+
 **Symptom:** Shipwright build fails with `Error: creating build container: short-name resolution enforced but cannot prompt without a TTY`
 
 **Cause:** Podman/Buildah requires fully qualified image names (e.g., `docker.io/library/golang:...`)
 but the Dockerfiles use short names.
 
-**Fix:** Use the branch `fix/dockerfile-fqdn-image-names` instead of `main` when importing,
-or wait for [PR #125](https://github.com/kagenti/agent-examples/pull/125) to be merged.
+**Fix:** This was fixed in [kagenti/agent-examples#125](https://github.com/kagenti/agent-examples/pull/125)
+(merged). If you're on an older branch, rebase onto `main`.
 
 ### Agent Missing Environment Variables
 
@@ -737,17 +735,13 @@ or wait for [PR #125](https://github.com/kagenti/agent-examples/pull/125) to be 
 
 **Symptom:** `Couldn't resolve host` when trying to reach the agent
 
-**Cause:** The Kagenti UI creates services with different names/ports than the manual
-deployment YAML.
-
-**Fix:** Check the actual service:
+**Fix:** Verify the service exists and check the name/port:
 
 ```bash
 kubectl get svc -n team1 | grep git-issue-agent
 ```
 
-The UI typically creates `git-issue-agent:8080`. The manual deployment creates
-`git-issue-agent-service:8000`.
+Both the UI and manual deployments create `git-issue-agent:8080` (targetPort 8000).
 
 ### Upstream Request Timeout
 
@@ -805,7 +799,7 @@ kubectl logs deployment/git-issue-agent -n team1 -c agent
 kubectl delete deployment git-issue-agent -n team1
 kubectl delete deployment github-tool -n team1
 kubectl delete svc git-issue-agent -n team1
-kubectl delete svc github-tool-service -n team1
+kubectl delete svc github-tool-mcp -n team1
 kubectl delete secret github-tool-secrets -n team1
 kubectl delete pod test-client -n team1 --ignore-not-found
 ```

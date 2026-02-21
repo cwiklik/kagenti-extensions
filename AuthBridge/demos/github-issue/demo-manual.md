@@ -184,6 +184,9 @@ See the [upstream demo](https://github.com/kagenti/kagenti/blob/main/docs/demos/
 
 ### Build and Load Container Images
 
+<!-- WORKAROUND: Remove this section once container images are published to a public
+     registry. Track: https://github.com/kagenti/agent-examples/issues — no issue filed yet. -->
+
 The agent and tool container images must be built locally and loaded into the kind
 cluster (they are not published to a public registry):
 
@@ -365,13 +368,13 @@ kubectl wait --for=condition=available --timeout=180s deployment/git-issue-agent
 Confirm that the webhook injected the AuthBridge sidecars:
 
 ```bash
-kubectl get pod -n team1 -l app=git-issue-agent -o jsonpath='{.items[0].spec.containers[*].name}'
+kubectl get pod -n team1 -l app.kubernetes.io/name=git-issue-agent -o jsonpath='{.items[0].spec.containers[*].name}'
 ```
 
 Expected output (with SPIFFE):
 
 ```txt
-git-issue-agent spiffe-helper kagenti-client-registration envoy-proxy
+agent spiffe-helper kagenti-client-registration envoy-proxy
 ```
 
 ---
@@ -410,7 +413,7 @@ Client registration complete!
 ### Check agent logs
 
 ```bash
-kubectl logs deployment/git-issue-agent -n team1 -c git-issue-agent
+kubectl logs deployment/git-issue-agent -n team1 -c agent
 ```
 
 Expected:
@@ -447,7 +450,7 @@ ollama list
 ollama serve
 ```
 
-> **Tip:** If using a different model, update `MODEL_NAME` in
+> **Tip:** If using a different model, update `TASK_MODEL_ID` in
 > `git-issue-agent-deployment.yaml` before deploying.
 
 ---
@@ -473,7 +476,7 @@ for `/.well-known/*`, `/healthz`, `/readyz`, and `/livez` by default:
 
 ```bash
 kubectl exec test-client -n team1 -- curl -s \
-  http://git-issue-agent-service:8000/.well-known/agent.json | jq .name
+  http://git-issue-agent:8080/.well-known/agent.json | jq .name
 # Expected: "Github issue agent"
 ```
 
@@ -483,7 +486,7 @@ Non-public endpoints require a valid JWT:
 
 ```bash
 kubectl exec test-client -n team1 -- curl -s \
-  http://git-issue-agent-service:8000/
+  http://git-issue-agent:8080/
 # Expected: {"error":"unauthorized","message":"missing Authorization header"}
 ```
 
@@ -494,7 +497,7 @@ A malformed or tampered token fails the JWKS signature check:
 ```bash
 kubectl exec test-client -n team1 -- curl -s \
   -H "Authorization: Bearer invalid-token" \
-  http://git-issue-agent-service:8000/
+  http://git-issue-agent:8080/
 # Expected: {"error":"unauthorized","message":"token validation failed: ..."}
 ```
 
@@ -540,7 +543,7 @@ TOKEN=$(kubectl exec test-client -n team1 -- curl -s -X POST \
 
 kubectl exec test-client -n team1 -- curl -s \
   -H "Authorization: Bearer $TOKEN" \
-  http://git-issue-agent-service:8000/.well-known/agent.json | jq
+  http://git-issue-agent:8080/.well-known/agent.json | jq
 ```
 
 ```json
@@ -634,7 +637,7 @@ echo "Client ID:     $CLIENT_ID"
 # If you see "null", the client was not found — check setup_keycloak.py ran.
 
 # Get the client secret (extract directly from the client listing;
-# the /client-secret endpoint may return null for auto-registered clients)
+# the Keycloak /client-secret endpoint returns null for auto-registered clients)
 CLIENT_SECRET=$(echo "$CLIENTS" | jq -r ".[0].secret")
 
 echo "Secret length: ${#CLIENT_SECRET}"
@@ -682,7 +685,7 @@ Still inside the test-client pod, send the A2A v0.3.0 request:
 curl -s --max-time 300 \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -X POST http://git-issue-agent-service:8000/ \
+  -X POST http://git-issue-agent:8080/ \
   -d '{
     "jsonrpc": "2.0",
     "id": "test-1",
@@ -709,7 +712,7 @@ If the request timed out but the agent completed the task in the background,
 check the agent logs for the task ID:
 
 ```bash
-kubectl logs deployment/git-issue-agent -n team1 -c git-issue-agent --tail=50
+kubectl logs deployment/git-issue-agent -n team1 -c agent --tail=50
 # Look for: Task <TASK_ID> saved successfully / TaskState.completed
 ```
 
@@ -722,7 +725,7 @@ kubectl exec -it test-client -n team1 -- sh
 curl -s --max-time 10 \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -X POST http://git-issue-agent-service:8000/ \
+  -X POST http://git-issue-agent:8080/ \
   -d '{
     "jsonrpc": "2.0",
     "id": "get-1",
@@ -865,7 +868,7 @@ Run `setup_keycloak.py` to set it up.
 kubectl logs deployment/git-issue-agent -n team1 -c kagenti-client-registration
 kubectl logs deployment/git-issue-agent -n team1 -c spiffe-helper
 kubectl logs deployment/git-issue-agent -n team1 -c envoy-proxy
-kubectl logs deployment/git-issue-agent -n team1 -c git-issue-agent
+kubectl logs deployment/git-issue-agent -n team1 -c agent
 ```
 
 ### GitHub Tool Returns 401
@@ -900,6 +903,7 @@ kubectl rollout restart deployment/git-issue-agent -n team1
 kubectl delete -f demos/github-issue/k8s/git-issue-agent-deployment.yaml
 kubectl delete -f demos/github-issue/k8s/github-tool-deployment.yaml
 kubectl delete secret github-tool-secrets -n team1
+kubectl delete pod test-client -n team1 --ignore-not-found
 ```
 
 ### Delete ConfigMaps
