@@ -463,28 +463,34 @@ model is pulled (`ollama pull ibm/granite4:latest`).
 
 ## Step 8: Chat via Kagenti UI
 
-This is the primary way to interact with the agent when using the UI deployment.
+<!-- WORKAROUND: Remove this limitation note once the Kagenti UI uses the demo realm
+     for agent communication, or once go-processor supports multiple JWKS URLs.
+     Track: https://github.com/kagenti/kagenti-extensions/issues — no issue filed yet. -->
+
+> **Known limitation:** The Kagenti UI authenticates via Keycloak's `master` realm,
+> but AuthBridge validates inbound JWTs against the `demo` realm JWKS. Since the
+> go-processor currently supports only a single JWKS URL, UI chat requests receive
+> a `401` ("key not found in key set"). The **Agent Card** page works because
+> `/.well-known/*` paths bypass JWT validation
+> ([PR #133](https://github.com/kagenti/kagenti-extensions/pull/133)).
+>
+> **Use [Step 9: Test via CLI](#step-9-test-via-cli-optional)** to test the full
+> AuthBridge flow end-to-end with a valid `demo`-realm token.
 
 1. Navigate to the **Agent Catalog** in the Kagenti UI.
 2. Select the `team1` namespace.
 3. Under **Available Agents**, select `git-issue-agent` and click **View Details**.
-4. In the chat input, type:
-
-   ```
-   List issues in kagenti/kagenti repo
-   ```
-
-5. The agent will process the request with full AuthBridge security:
-   - Your UI token is validated on inbound by AuthBridge
-   - The token is exchanged for the GitHub tool's audience
-   - The tool accesses GitHub with the appropriate PAT based on your scopes
+4. Verify the **Agent Card** is visible (this confirms the agent is running and
+   the `/.well-known/*` bypass is working).
+5. Chat via the UI will not work until the realm mismatch is resolved (see note above).
+   Use the CLI test in Step 9 instead.
 
 ---
 
-## Step 9: Test via CLI (Optional)
+## Step 9: Test via CLI
 
-You can also test the AuthBridge flow from the command line to verify inbound
-validation and token exchange.
+Test the AuthBridge flow from the command line to verify inbound validation and
+token exchange using a `demo`-realm token.
 
 > **Note:** The CLI test commands below use the same service name and port
 > (`git-issue-agent:8080`) as both the UI and manual deployments.
