@@ -22,6 +22,8 @@ import (
 
 	"github.com/kagenti/kagenti-extensions/kagenti-webhook/internal/webhook/config"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
@@ -182,6 +184,17 @@ func (m *PodMutator) InjectAuthBridge(ctx context.Context, podSpec *corev1.PodSp
 	}
 
 	spireEnabled := IsSpireEnabled(labels)
+
+	// When SPIRE is enabled, ensure a dedicated ServiceAccount exists so
+	// the SPIFFE ID reflects the workload name instead of "default".
+	if spireEnabled && (podSpec.ServiceAccountName == "" || podSpec.ServiceAccountName == "default") {
+		if err := m.ensureServiceAccount(ctx, namespace, crName); err != nil {
+			mutatorLog.Error(err, "Failed to ensure ServiceAccount", "namespace", namespace, "name", crName)
+			return false, fmt.Errorf("failed to ensure service account: %w", err)
+		}
+		podSpec.ServiceAccountName = crName
+		mutatorLog.Info("Set ServiceAccountName for SPIRE identity", "namespace", namespace, "serviceAccount", crName)
+	}
 
 	// Initialize slices
 	if podSpec.Containers == nil {
@@ -388,6 +401,45 @@ func (m *PodMutator) InjectVolumesWithSpireOption(podSpec *corev1.PodSpec, spire
 	}
 
 	mutatorLog.Info("Volume injection complete", "totalVolumes", len(podSpec.Volumes), "injected", injectedCount)
+	return nil
+}
+
+const managedByLabel = "kagenti.io/managed-by"
+const managedByValue = "webhook"
+
+// ensureServiceAccount creates a ServiceAccount in the given namespace if it
+// does not already exist. This gives SPIRE-enabled workloads a dedicated
+// identity so the SPIFFE ID is spiffe://<trust-domain>/ns/<ns>/sa/<name>
+// rather than .../sa/default.
+func (m *PodMutator) ensureServiceAccount(ctx context.Context, namespace, name string) error {
+	sa := &corev1.ServiceAccount{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+			Labels: map[string]string{
+				managedByLabel: managedByValue,
+			},
+		},
+	}
+	if err := m.Client.Create(ctx, sa); err != nil {
+		if apierrors.IsAlreadyExists(err) {
+			existing := &corev1.ServiceAccount{}
+			if getErr := m.Client.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, existing); getErr != nil {
+				mutatorLog.Error(getErr, "Failed to fetch existing ServiceAccount", "namespace", namespace, "name", name)
+				return nil
+			}
+			if existing.Labels[managedByLabel] != managedByValue {
+				mutatorLog.Info("WARNING: ServiceAccount exists but is not managed by this webhook",
+					"namespace", namespace, "name", name,
+					"existingLabels", existing.Labels)
+			} else {
+				mutatorLog.Info("ServiceAccount already exists", "namespace", namespace, "name", name)
+			}
+			return nil
+		}
+		return err
+	}
+	mutatorLog.Info("Created ServiceAccount", "namespace", namespace, "name", name)
 	return nil
 }
 
