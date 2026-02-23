@@ -235,7 +235,11 @@ kubectl create secret generic github-tool-secrets -n team1 \
 
 6. Set **MCP Transport Protocol** to `streamable HTTP`
 
-7. Under **Port Configuration**, set both **Service and Target Ports** to `9090`
+7. Under **Port Configuration**, set **Service Port** to `8000` and **Target Port** to `9090`
+
+   > **Why different ports?** The tool binary listens on port 9090 (hardcoded,
+   > ignores the `PORT` env var), so `targetPort` must be 9090. The service port
+   > can be any value — we use 8000 to match the agent's `MCP_URL` default.
 
 8. Under **Environment Variables**, click **Import from File/URL**,
    Select **From URL** and provide the `.env` file from this repo:
@@ -266,9 +270,12 @@ Shipwright build. Wait for it to complete.
 
 > **Known issue ([kagenti-extensions#138](https://github.com/kagenti/kagenti-extensions/issues/138)):**
 > The webhook injects AuthBridge sidecars into the tool deployment even though the
-> tool should not have them. The go-processor (ext_proc) gRPC server and the GitHub
-> tool's MCP server both bind to port 9090, causing a port conflict that makes the
-> tool unreachable (agent gets "Couldn't connect to the MCP server").
+> tool has `kagenti.io/inject: disabled`. This happens because `InjectAuthBridge`
+> uses the `PrecedenceEvaluator`, which only checks per-sidecar labels
+> (`kagenti.io/envoy-proxy-inject`, etc.) — not the master `kagenti.io/inject`
+> label. The injected go-processor (ext_proc) gRPC server and the GitHub tool's
+> MCP broker both bind to port 9090, causing a port conflict that makes the tool
+> unreachable (agent gets "Couldn't connect to the MCP server").
 
 Remove the sidecars by temporarily disabling the webhook, redeploying clean, then
 restoring:
@@ -288,14 +295,17 @@ d = json.load(sys.stdin)
 spec = d['spec']['template']['spec']
 spec['containers'] = [c for c in spec['containers'] if c['name'] == 'mcp']
 spec.pop('initContainers', None)
-injected = {'envoy-config','shared-data','svid-output','spire-agent-socket','spiffe-helper-config'}
+injected = {'envoy-config','shared-data','svid-output','spire-agent-socket','spiffe-helper-config','authbridge-config'}
 spec['volumes'] = [v for v in spec.get('volumes',[]) if v['name'] not in injected]
 if not spec.get('volumes'): spec.pop('volumes', None)
 for c in spec['containers']:
     if 'volumeMounts' in c:
         c['volumeMounts'] = [vm for vm in c['volumeMounts'] if vm['name'] not in injected]
         if not c['volumeMounts']: del c['volumeMounts']
-d['spec']['template']['metadata']['labels']['kagenti.io/inject'] = 'disabled'
+labels = d['spec']['template']['metadata']['labels']
+labels['kagenti.io/inject'] = 'disabled'
+labels['kagenti.io/envoy-proxy-inject'] = 'false'
+labels['kagenti.io/client-registration-inject'] = 'false'
 for k in ['resourceVersion','uid','creationTimestamp','generation','managedFields']:
     d['metadata'].pop(k, None)
 d.pop('status', None)
@@ -319,11 +329,47 @@ kubectl patch mutatingwebhookconfiguration \
   --type='json' -p='[{"op":"replace","path":"/webhooks/0/failurePolicy","value":"Fail"}]'
 ```
 
+> **Important:** The script adds **per-sidecar opt-out labels**
+> (`kagenti.io/envoy-proxy-inject: "false"`, `kagenti.io/client-registration-inject: "false"`)
+> in addition to `kagenti.io/inject: disabled`. These per-sidecar labels are what the
+> `PrecedenceEvaluator` actually checks, so they prevent re-injection on subsequent
+> rollouts even with the webhook active.
+>
+> **Do not use `kubectl apply`** to update the deployment — Kubernetes strategic merge
+> patches merge the `containers` list by name rather than replacing it, so removed
+> containers reappear. Use `kubectl delete` + `kubectl create` (as above) or
+> `kubectl replace --force`.
+
 Verify the tool is running with only 1 container:
 
 ```bash
 kubectl get pods -n team1 | grep github-tool
 # Expected: github-tool-xxxxx   1/1   Running   0   ...
+```
+
+### Patch: Fix tool service targetPort
+
+<!-- WORKAROUND: Remove this section once the tool respects the PORT env var
+     or the Kagenti UI sets targetPort correctly. Tracked in kagenti-extensions#138. -->
+
+> **Known issue ([kagenti-extensions#138](https://github.com/kagenti/kagenti-extensions/issues/138)):**
+> The tool binary listens on port 9090 (ignoring the `PORT` env var), but the
+> Kagenti UI may create the Service with `targetPort: 8000`. Verify and fix if needed.
+
+```bash
+# Check the current targetPort
+kubectl get svc github-tool-mcp -n team1 -o jsonpath='{.spec.ports[0].targetPort}'
+# If it shows 8000 instead of 9090, patch it:
+kubectl patch svc github-tool-mcp -n team1 --type='json' \
+  -p='[{"op":"replace","path":"/spec/ports/0/targetPort","value":9090}]'
+```
+
+Verify the tool is reachable:
+
+```bash
+kubectl run test-mcp --image=curlimages/curl -n team1 --restart=Never --rm -it -- \
+  curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://github-tool-mcp:8000/mcp
+# Expected: 200 (SSE connection, may timeout after 5s — that's OK)
 ```
 
 ---
@@ -853,6 +899,32 @@ kubectl logs deployment/git-issue-agent -n team1 -c spiffe-helper
 kubectl logs deployment/git-issue-agent -n team1 -c envoy-proxy
 kubectl logs deployment/git-issue-agent -n team1 -c agent
 ```
+
+### Tool MCP Server Unreachable / Connection Reset
+
+**Symptom:** Agent returns `Couldn't connect to the MCP server after 60 seconds`, or
+direct curl to the tool gets `Connection reset by peer`.
+
+**Possible causes:**
+
+1. **AuthBridge sidecars injected** — The webhook injected envoy-proxy into the tool
+   pod, causing a port 9090 conflict. Check container count:
+   ```bash
+   kubectl get pods -n team1 | grep github-tool
+   # If you see 3/3 instead of 1/1, sidecars were injected
+   ```
+   **Fix:** Follow the [Patch: Remove AuthBridge sidecars](#patch-remove-authbridge-sidecars-from-the-tool) section above.
+
+2. **Service targetPort mismatch** — The tool listens on port 9090 but the Service
+   targetPort is 8000:
+   ```bash
+   kubectl get svc github-tool-mcp -n team1 -o jsonpath='{.spec.ports[0].targetPort}'
+   # If 8000, patch to 9090:
+   kubectl patch svc github-tool-mcp -n team1 --type='json' \
+     -p='[{"op":"replace","path":"/spec/ports/0/targetPort","value":9090}]'
+   ```
+
+**Tracked in:** [kagenti-extensions#138](https://github.com/kagenti/kagenti-extensions/issues/138)
 
 ### GitHub Tool Returns 401
 
