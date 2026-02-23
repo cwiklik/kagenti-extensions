@@ -77,9 +77,9 @@ AUTHBRIDGE_DEMO=${AUTHBRIDGE_DEMO:-false}
 AUTHBRIDGE_NAMESPACE=${AUTHBRIDGE_NAMESPACE:-team1}
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Override AUTHBRIDGE_K8S_DIR to point at a different demo's k8s manifests.
-# Defaults to the single-target demo. For the github-issue demo, run:
+# Defaults to the webhook demo. For the github-issue demo, run:
 #   AUTHBRIDGE_K8S_DIR=AuthBridge/demos/github-issue/k8s ./scripts/webhook-rollout.sh
-AUTHBRIDGE_K8S_DIR="${AUTHBRIDGE_K8S_DIR:-${SCRIPT_DIR}/../../AuthBridge/demos/single-target/k8s}"
+AUTHBRIDGE_K8S_DIR="${AUTHBRIDGE_K8S_DIR:-${SCRIPT_DIR}/../../AuthBridge/demos/webhook/k8s}"
 
 # ==========================================
 # Input Validation
@@ -247,7 +247,7 @@ if [ "${AUTHBRIDGE_DEMO}" = "true" ]; then
     echo "AuthBridge Prerequisites Ready!"
     echo "=========================================="
     echo ""
-    echo "See AuthBridge/demo-webhook.md for next steps"
+    echo "See AuthBridge/demos/webhook/README.md for next steps"
 fi
 
 echo ""

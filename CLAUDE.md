@@ -20,9 +20,8 @@ kagenti-extensions/
 │   │   ├── go-processor/     #     gRPC ext-proc server (inbound JWT validation, outbound token exchange)
 │   │   └── quickstart/       #     Standalone demo (no SPIFFE)
 │   ├── client-registration/  #   Keycloak auto-registration (Python)
-│   ├── demos/                #   Demo scenarios (single-target, multi-target, github-issue)
-│   ├── keycloak_sync.py      #   Declarative Keycloak sync tool
-│   └── setup_keycloak-webhook.py
+│   ├── demos/                #   Demo scenarios (webhook, single-target, multi-target, github-issue)
+│   └── keycloak_sync.py      #   Declarative Keycloak sync tool
 ├── charts/
 │   └── kagenti-webhook/      # Helm chart for the webhook
 ├── .github/
@@ -224,7 +223,7 @@ cd AuthBridge/AuthProxy && make build-images
 
 1. Set up a Kind cluster with SPIRE + Keycloak (use [Kagenti Ansible installer](https://github.com/kagenti/kagenti/blob/main/docs/install.md))
 2. Deploy the webhook: `cd kagenti-webhook && make local-dev CLUSTER=<name>`
-3. Follow `AuthBridge/demos/single-target/demo.md` for the complete AuthBridge demo
+3. Follow `AuthBridge/demos/webhook/README.md` for the webhook-based AuthBridge demo (recommended), or `AuthBridge/demos/single-target/demo.md` for manual deployment
 
 ### Quick Webhook Iteration
 
