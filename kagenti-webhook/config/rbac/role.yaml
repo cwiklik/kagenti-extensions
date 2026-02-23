@@ -17,4 +17,4 @@ rules:
   verbs: ["get", "list", "watch"]
 - apiGroups: [""]
   resources: ["serviceaccounts"]
-  verbs: ["get", "create"]
+  verbs: ["get", "create", "update"]
