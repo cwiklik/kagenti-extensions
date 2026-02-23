@@ -731,7 +731,7 @@ If the agent is missing environment variables after UI deployment (e.g., `MCP_UR
 ```bash
 # Set missing env vars on the agent container
 kubectl set env deployment/git-issue-agent -n team1 -c agent \
-  MCP_URL="http://github-tool-mcp:9090/mcp" \
+  MCP_URL="http://github-tool-mcp:8000/mcp" \
   JWKS_URI="http://keycloak-service.keycloak.svc:8080/realms/demo/protocol/openid-connect/certs"
 
 # If using OpenAI and the key is in a secret:
