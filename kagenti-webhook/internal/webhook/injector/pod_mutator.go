@@ -404,6 +404,9 @@ func (m *PodMutator) InjectVolumesWithSpireOption(podSpec *corev1.PodSpec, spire
 	return nil
 }
 
+const managedByLabel = "kagenti.io/managed-by"
+const managedByValue = "webhook"
+
 // ensureServiceAccount creates a ServiceAccount in the given namespace if it
 // does not already exist. This gives SPIRE-enabled workloads a dedicated
 // identity so the SPIFFE ID is spiffe://<trust-domain>/ns/<ns>/sa/<name>
@@ -414,13 +417,24 @@ func (m *PodMutator) ensureServiceAccount(ctx context.Context, namespace, name s
 			Name:      name,
 			Namespace: namespace,
 			Labels: map[string]string{
-				"kagenti.io/managed-by": "webhook",
+				managedByLabel: managedByValue,
 			},
 		},
 	}
 	if err := m.Client.Create(ctx, sa); err != nil {
 		if apierrors.IsAlreadyExists(err) {
-			mutatorLog.Info("ServiceAccount already exists", "namespace", namespace, "name", name)
+			existing := &corev1.ServiceAccount{}
+			if getErr := m.Client.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, existing); getErr != nil {
+				mutatorLog.Error(getErr, "Failed to fetch existing ServiceAccount", "namespace", namespace, "name", name)
+				return nil
+			}
+			if existing.Labels[managedByLabel] != managedByValue {
+				mutatorLog.Info("WARNING: ServiceAccount exists but is not managed by this webhook",
+					"namespace", namespace, "name", name,
+					"existingLabels", existing.Labels)
+			} else {
+				mutatorLog.Info("ServiceAccount already exists", "namespace", namespace, "name", name)
+			}
 			return nil
 		}
 		return err
