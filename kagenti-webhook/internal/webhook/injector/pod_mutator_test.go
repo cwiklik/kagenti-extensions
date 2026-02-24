@@ -128,8 +128,8 @@ func TestInjectAuthBridge_SetsServiceAccountName(t *testing.T) {
 
 	podSpec := &corev1.PodSpec{}
 	labels := map[string]string{
-		KagentiTypeLabel:  KagentiTypeAgent,
-		SpireEnableLabel:  SpireEnabledValue,
+		KagentiTypeLabel:      KagentiTypeAgent,
+		SpireEnableLabel:      SpireEnabledValue,
 		AuthBridgeInjectLabel: AuthBridgeInjectValue,
 	}
 
@@ -164,8 +164,8 @@ func TestInjectAuthBridge_RespectsExistingServiceAccountName(t *testing.T) {
 		ServiceAccountName: "custom-sa",
 	}
 	labels := map[string]string{
-		KagentiTypeLabel:  KagentiTypeAgent,
-		SpireEnableLabel:  SpireEnabledValue,
+		KagentiTypeLabel:      KagentiTypeAgent,
+		SpireEnableLabel:      SpireEnabledValue,
 		AuthBridgeInjectLabel: AuthBridgeInjectValue,
 	}
 
@@ -212,6 +212,64 @@ func TestInjectAuthBridge_NoSACreationWithoutSpire(t *testing.T) {
 	err = m.Client.Get(ctx, client.ObjectKey{Namespace: "test-ns", Name: "my-agent"}, sa)
 	if err == nil {
 		t.Error("expected ServiceAccount to NOT be created when SPIRE is disabled")
+	}
+}
+
+func TestInjectAuthBridge_GlobalOptOut_Agent(t *testing.T) {
+	ns := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   "test-ns",
+			Labels: map[string]string{LabelNamespaceInject: "true"},
+		},
+	}
+	m := newTestMutator(ns)
+	ctx := context.Background()
+
+	podSpec := &corev1.PodSpec{}
+	labels := map[string]string{
+		KagentiTypeLabel:      KagentiTypeAgent,
+		AuthBridgeInjectLabel: AuthBridgeDisabledValue,
+	}
+
+	injected, err := m.InjectAuthBridge(ctx, podSpec, "test-ns", "my-agent", labels)
+	if err != nil {
+		t.Fatalf("InjectAuthBridge() returned error: %v", err)
+	}
+	if injected {
+		t.Fatal("expected InjectAuthBridge to return false when kagenti.io/inject=disabled")
+	}
+	if len(podSpec.Containers) != 0 || len(podSpec.InitContainers) != 0 {
+		t.Errorf("expected no containers to be injected, got containers=%v initContainers=%v",
+			podSpec.Containers, podSpec.InitContainers)
+	}
+}
+
+func TestInjectAuthBridge_GlobalOptOut_Tool(t *testing.T) {
+	ns := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   "test-ns",
+			Labels: map[string]string{LabelNamespaceInject: "true"},
+		},
+	}
+	m := newTestMutator(ns)
+	ctx := context.Background()
+
+	podSpec := &corev1.PodSpec{}
+	labels := map[string]string{
+		KagentiTypeLabel:      KagentiTypeTool,
+		AuthBridgeInjectLabel: AuthBridgeDisabledValue,
+	}
+
+	injected, err := m.InjectAuthBridge(ctx, podSpec, "test-ns", "my-tool", labels)
+	if err != nil {
+		t.Fatalf("InjectAuthBridge() returned error: %v", err)
+	}
+	if injected {
+		t.Fatal("expected InjectAuthBridge to return false when kagenti.io/inject=disabled")
+	}
+	if len(podSpec.Containers) != 0 || len(podSpec.InitContainers) != 0 {
+		t.Errorf("expected no containers to be injected, got containers=%v initContainers=%v",
+			podSpec.Containers, podSpec.InitContainers)
 	}
 }
 
