@@ -235,11 +235,11 @@ kubectl create secret generic github-tool-secrets -n team1 \
 
 6. Set **MCP Transport Protocol** to `streamable HTTP`
 
-7. Under **Port Configuration**, set **Service Port** to `8000` and **Target Port** to `9090`
+7. Under **Port Configuration**, set **Service Port** to `9090` and **Target Port** to `9090`
 
-   > **Why different ports?** The tool binary listens on port 9090 (hardcoded,
-   > ignores the `PORT` env var), so `targetPort` must be 9090. The service port
-   > can be any value — we use 8000 to match the agent's `MCP_URL` default.
+   > The tool binary listens on port 9090. The agent's `MCP_URL` connects to
+   > `http://github-tool-mcp:9090/mcp`, so both the service port and target port
+   > must be 9090 to match.
 
 8. Under **Environment Variables**, click **Import from File/URL**,
    Select **From URL** and provide the `.env` file from this repo:
@@ -347,28 +347,13 @@ kubectl get pods -n team1 | grep github-tool
 # Expected: github-tool-xxxxx   1/1   Running   0   ...
 ```
 
-### Patch: Fix tool service targetPort
+### Verify the tool is reachable
 
-<!-- WORKAROUND: Remove this section once the tool respects the PORT env var
-     or the Kagenti UI sets targetPort correctly. Tracked in kagenti-extensions#138. -->
-
-> **Known issue ([kagenti-extensions#138](https://github.com/kagenti/kagenti-extensions/issues/138)):**
-> The tool binary listens on port 9090 (ignoring the `PORT` env var), but the
-> Kagenti UI may create the Service with `targetPort: 8000`. Verify and fix if needed.
-
-```bash
-# Check the current targetPort
-kubectl get svc github-tool-mcp -n team1 -o jsonpath='{.spec.ports[0].targetPort}'
-# If it shows 8000 instead of 9090, patch it:
-kubectl patch svc github-tool-mcp -n team1 --type='json' \
-  -p='[{"op":"replace","path":"/spec/ports/0/targetPort","value":9090}]'
-```
-
-Verify the tool is reachable:
+Confirm the tool service port is correct and the tool responds:
 
 ```bash
 kubectl run test-mcp --image=curlimages/curl -n team1 --restart=Never --rm -it -- \
-  curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://github-tool-mcp:8000/mcp
+  curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://github-tool-mcp:9090/mcp
 # Expected: 200 (SSE connection, may timeout after 5s — that's OK)
 ```
 
@@ -395,9 +380,13 @@ kubectl run test-mcp --image=curlimages/curl -n team1 --restart=Never --rm -it -
 
 7. **Workload Type** select `Deployment`.
 
-8. Under **Port Configuration**, set **Service Port** to `8080` and **Target Port** to `8000`
+8. Make sure **Enable AuthBridge sidecar injection** is checked.
 
-9. Under **Environment Variables**, click **Import from File/URL**,
+9. Make sure **Enable SPIRE identity (spiffe-helper sidecar)** is checked.
+
+10. Under **Port Configuration**, set **Service Port** to `8080` and **Target Port** to `8000`
+
+11. Under **Environment Variables**, click **Import from File/URL**,
    Select **From URL** and provide the **URL** from this repo:
     - For Ollama: `https://raw.githubusercontent.com/kagenti/agent-examples/refs/heads/main/a2a/git_issue_agent/.env.ollama`
     - For OpenAI: `https://raw.githubusercontent.com/kagenti/agent-examples/refs/heads/main/a2a/git_issue_agent/.env.openai`
@@ -416,7 +405,7 @@ kubectl run test-mcp --image=curlimages/curl -n team1 --restart=Never --rm -it -
    >   --from-literal=apikey="<YOUR_OPENAI_API_KEY>"
    > ```
 
-10. Click **Build & Deploy Agent**.
+12. Click **Build & Deploy Agent**.
 
 Wait for the Shipwright build to complete and the deployment to become ready.
 
@@ -777,7 +766,7 @@ If the agent is missing environment variables after UI deployment (e.g., `MCP_UR
 ```bash
 # Set missing env vars on the agent container
 kubectl set env deployment/git-issue-agent -n team1 -c agent \
-  MCP_URL="http://github-tool-mcp:8000/mcp" \
+  MCP_URL="http://github-tool-mcp:9090/mcp" \
   JWKS_URI="http://keycloak-service.keycloak.svc:8080/realms/demo/protocol/openid-connect/certs"
 
 # If using OpenAI and the key is in a secret:
@@ -915,16 +904,13 @@ direct curl to the tool gets `Connection reset by peer`.
    ```
    **Fix:** Follow the [Patch: Remove AuthBridge sidecars](#patch-remove-authbridge-sidecars-from-the-tool) section above.
 
-2. **Service targetPort mismatch** — The tool listens on port 9090 but the Service
-   targetPort is 8000:
+2. **Service port mismatch** — Verify the tool service uses port 9090 (matching the agent's `MCP_URL`):
    ```bash
-   kubectl get svc github-tool-mcp -n team1 -o jsonpath='{.spec.ports[0].targetPort}'
-   # If 8000, patch to 9090:
+   kubectl get svc github-tool-mcp -n team1 -o jsonpath='{.spec.ports[0].port}:{.spec.ports[0].targetPort}'
+   # Should show 9090:9090. If not, patch:
    kubectl patch svc github-tool-mcp -n team1 --type='json' \
-     -p='[{"op":"replace","path":"/spec/ports/0/targetPort","value":9090}]'
+     -p='[{"op":"replace","path":"/spec/ports/0/port","value":9090},{"op":"replace","path":"/spec/ports/0/targetPort","value":9090}]'
    ```
-
-**Tracked in:** [kagenti-extensions#138](https://github.com/kagenti/kagenti-extensions/issues/138)
 
 ### GitHub Tool Returns 401
 
