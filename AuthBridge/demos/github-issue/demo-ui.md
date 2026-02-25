@@ -235,117 +235,37 @@ kubectl create secret generic github-tool-secrets -n team1 \
 
 6. Set **MCP Transport Protocol** to `streamable HTTP`
 
-7. Under **Port Configuration**, set **Service Port** to `9090` and **Target Port** to `9090`
+7. Make sure **Enable AuthBridge sidecar injection** is **unchecked**.
+
+8. Make sure **Enable SPIRE identity (spiffe-helper sidecar)** is **unchecked**.
+
+   > The GitHub tool does not need AuthBridge sidecars — it validates incoming tokens
+   > directly using its own JWKS logic. Injecting sidecars would cause a port 9090
+   > conflict between the tool's MCP broker and the go-processor gRPC server.
+
+9. Under **Port Configuration**, set **Service Port** to `9090` and **Target Port** to `9090`
 
    > The tool binary listens on port 9090. The agent's `MCP_URL` connects to
    > `http://github-tool-mcp:9090/mcp`, so both the service port and target port
    > must be 9090 to match.
 
-8. Under **Environment Variables**, click **Import from File/URL**,
-   Select **From URL** and provide the `.env` file from this repo:
-   - **URL** `https://raw.githubusercontent.com/kagenti/agent-examples/refs/heads/main/mcp/github_tool/.env.authbridge`
-   - Click **Fetch & Parse** — this populates all environment variables, including
-     Secret references for the PAT tokens and direct values for Keycloak settings.
-   - Click **Import** to set all the env. variables.
+10. Under **Environment Variables**, click **Import from File/URL**,
+    Select **From URL** and provide the `.env` file from this repo:
+    - **URL** `https://raw.githubusercontent.com/kagenti/agent-examples/refs/heads/main/mcp/github_tool/.env.authbridge`
+    - Click **Fetch & Parse** — this populates all environment variables, including
+      Secret references for the PAT tokens and direct values for Keycloak settings.
+    - Click **Import** to set all the env. variables.
 
-   The imported variables will show three **Secret** type entries referencing
-   `github-tool-secrets` and three **Direct Value** entries for Keycloak configuration.
-   No manual editing is needed.
+    The imported variables will show three **Secret** type entries referencing
+    `github-tool-secrets` and three **Direct Value** entries for Keycloak configuration.
+    No manual editing is needed.
 
-   > **Tip:** You can also upload the file directly from your local system.
+    > **Tip:** You can also upload the file directly from your local system.
 
-9. Click **Build & Deploy New Tool**.
+11. Click **Build & Deploy New Tool**.
 
 You will be redirected to a **Build Progress** page where you can monitor the
 Shipwright build. Wait for it to complete.
-
-> **Note:** If the build fails with `short-name resolution enforced`, the Dockerfiles
-> in the `agent-examples` repo need fully qualified image names. This was fixed in
-> [kagenti/agent-examples#125](https://github.com/kagenti/agent-examples/pull/125)
-> (merged). If you're on an older branch, rebase onto `main`.
-
-### Patch: Remove AuthBridge sidecars from the tool
-
-<!-- WORKAROUND: Remove this entire patch section once kagenti-extensions#138 is fixed. -->
-
-> **Known issue ([kagenti-extensions#138](https://github.com/kagenti/kagenti-extensions/issues/138)):**
-> The webhook injects AuthBridge sidecars into the tool deployment even though the
-> tool has `kagenti.io/inject: disabled`. This happens because `InjectAuthBridge`
-> uses the `PrecedenceEvaluator`, which only checks per-sidecar labels
-> (`kagenti.io/envoy-proxy-inject`, etc.) — not the master `kagenti.io/inject`
-> label. The injected go-processor (ext_proc) gRPC server and the GitHub tool's
-> MCP broker both bind to port 9090, causing a port conflict that makes the tool
-> unreachable (agent gets "Couldn't connect to the MCP server").
-
-Remove the sidecars by temporarily disabling the webhook, redeploying clean, then
-restoring:
-
-```bash
-# 1. Disable the webhook
-kubectl scale deployment kagenti-webhook-controller-manager \
-  -n kagenti-webhook-system --replicas=0
-kubectl patch mutatingwebhookconfiguration \
-  kagenti-webhook-authbridge-mutating-webhook-configuration \
-  --type='json' -p='[{"op":"replace","path":"/webhooks/0/failurePolicy","value":"Ignore"}]'
-
-# 2. Delete and recreate the tool without sidecars
-kubectl get deployment github-tool -n team1 -o json | python3 -c "
-import sys, json
-d = json.load(sys.stdin)
-spec = d['spec']['template']['spec']
-spec['containers'] = [c for c in spec['containers'] if c['name'] == 'mcp']
-spec.pop('initContainers', None)
-injected = {'envoy-config','shared-data','svid-output','spire-agent-socket','spiffe-helper-config','authbridge-config'}
-spec['volumes'] = [v for v in spec.get('volumes',[]) if v['name'] not in injected]
-if not spec.get('volumes'): spec.pop('volumes', None)
-for c in spec['containers']:
-    if 'volumeMounts' in c:
-        c['volumeMounts'] = [vm for vm in c['volumeMounts'] if vm['name'] not in injected]
-        if not c['volumeMounts']: del c['volumeMounts']
-labels = d['spec']['template']['metadata']['labels']
-labels['kagenti.io/inject'] = 'disabled'
-labels['kagenti.io/envoy-proxy-inject'] = 'false'
-labels['kagenti.io/client-registration-inject'] = 'false'
-for k in ['resourceVersion','uid','creationTimestamp','generation','managedFields']:
-    d['metadata'].pop(k, None)
-d.pop('status', None)
-d['metadata'].pop('annotations', None)
-d['spec']['template']['metadata'].pop('annotations', None)
-json.dump(d, sys.stdout)
-" > /tmp/github-tool-clean.json
-
-kubectl delete deployment github-tool -n team1
-sleep 2
-kubectl create -f /tmp/github-tool-clean.json
-
-# 3. Wait for clean rollout
-kubectl rollout status deployment/github-tool -n team1 --timeout=60s
-
-# 4. Restore the webhook
-kubectl scale deployment kagenti-webhook-controller-manager \
-  -n kagenti-webhook-system --replicas=1
-kubectl patch mutatingwebhookconfiguration \
-  kagenti-webhook-authbridge-mutating-webhook-configuration \
-  --type='json' -p='[{"op":"replace","path":"/webhooks/0/failurePolicy","value":"Fail"}]'
-```
-
-> **Important:** The script adds **per-sidecar opt-out labels**
-> (`kagenti.io/envoy-proxy-inject: "false"`, `kagenti.io/client-registration-inject: "false"`)
-> in addition to `kagenti.io/inject: disabled`. These per-sidecar labels are what the
-> `PrecedenceEvaluator` actually checks, so they prevent re-injection on subsequent
-> rollouts even with the webhook active.
->
-> **Do not use `kubectl apply`** to update the deployment — Kubernetes strategic merge
-> patches merge the `containers` list by name rather than replacing it, so removed
-> containers reappear. Use `kubectl delete` + `kubectl create` (as above) or
-> `kubectl replace --force`.
-
-Verify the tool is running with only 1 container:
-
-```bash
-kubectl get pods -n team1 | grep github-tool
-# Expected: github-tool-xxxxx   1/1   Running   0   ...
-```
 
 ### Verify the tool is reachable
 
@@ -409,45 +329,6 @@ kubectl run test-mcp --image=curlimages/curl -n team1 --restart=Never --rm -it -
 
 Wait for the Shipwright build to complete and the deployment to become ready.
 
-### Patch: Enable SPIRE identity
-
-<!-- WORKAROUND: Remove this entire "Patch: Enable SPIRE identity" section
-     (through "Wait for the rollout") once kagenti/kagenti#738 is fixed. -->
-
-> **Known issue:** The Kagenti UI drops the `kagenti.io/spire: enabled` label on the
-> final deployment pass ([kagenti/kagenti#738](https://github.com/kagenti/kagenti/issues/738)),
-> causing the webhook to inject sidecars without SPIRE support. Until this is fixed,
-> apply the following patch after the UI deploys the agent.
-
-**1. Create the service account** (SPIRE identity is derived from the pod's SA):
-
-```bash
-kubectl create sa git-issue-agent -n team1
-```
-
-**2. Patch the deployment** to add spiffe-helper, SPIRE volumes, and the SPIRE-aware
-client-registration script:
-
-```bash
-kubectl patch deployment git-issue-agent -n team1 --type=json -p '[
-  {"op":"add","path":"/spec/template/spec/serviceAccountName","value":"git-issue-agent"},
-  {"op":"replace","path":"/spec/template/metadata/labels/kagenti.io~1spire","value":"enabled"},
-  {"op":"replace","path":"/spec/template/spec/containers/1/env/0/value","value":"true"},
-  {"op":"replace","path":"/spec/template/spec/containers/1/command","value":["/bin/sh","-c","\necho \"Waiting for SPIFFE credentials...\"\nwhile [ ! -f /opt/jwt_svid.token ]; do\n  echo \"waiting for SVID\"\n  sleep 1\ndone\necho \"SPIFFE credentials ready!\"\nJWT_PAYLOAD=$(cat /opt/jwt_svid.token | cut -d\".\" -f2)\nif ! CLIENT_ID=$(echo \"${JWT_PAYLOAD}==\" | base64 -d | python -c \"import sys,json; print(json.load(sys.stdin).get(\\\"sub\\\",\\\"\\\"))\"); then\n  echo \"Error: Failed to decode JWT payload or extract client ID\" >&2\n  exit 1\nfi\nif [ -z \"$CLIENT_ID\" ]; then\n  echo \"Error: Extracted client ID is empty\" >&2\n  exit 1\nfi\necho \"$CLIENT_ID\" > /shared/client-id.txt\necho \"Client ID (SPIFFE ID): $CLIENT_ID\"\necho \"Starting client registration...\"\npython client_registration.py\necho \"Client registration complete!\"\ntail -f /dev/null\n"]},
-  {"op":"add","path":"/spec/template/spec/containers/1/volumeMounts/-","value":{"name":"svid-output","mountPath":"/opt"}},
-  {"op":"add","path":"/spec/template/spec/volumes/-","value":{"name":"spire-agent-socket","csi":{"driver":"csi.spiffe.io","readOnly":true}}},
-  {"op":"add","path":"/spec/template/spec/volumes/-","value":{"name":"spiffe-helper-config","configMap":{"name":"spiffe-helper-config"}}},
-  {"op":"add","path":"/spec/template/spec/volumes/-","value":{"name":"svid-output","emptyDir":{}}},
-  {"op":"add","path":"/spec/template/spec/containers/-","value":{"name":"spiffe-helper","image":"ghcr.io/spiffe/spiffe-helper:nightly","command":["/spiffe-helper","-config=/etc/spiffe-helper/helper.conf","run"],"securityContext":{"runAsUser":1000,"runAsGroup":1000},"volumeMounts":[{"name":"spiffe-helper-config","mountPath":"/etc/spiffe-helper"},{"name":"spire-agent-socket","mountPath":"/spiffe-workload-api"},{"name":"svid-output","mountPath":"/opt"},{"name":"shared-data","mountPath":"/shared"}]}}
-]'
-```
-
-**3. Wait for the rollout:**
-
-```bash
-kubectl rollout status deployment/git-issue-agent -n team1 --timeout=120s
-```
-
 ---
 
 ## Step 6: Verify the Deployment
@@ -476,16 +357,10 @@ github-tool-7f8c9d6b44-yyyyy      1/1     Running   0          5m
 kubectl get pod -n team1 -l app.kubernetes.io/name=git-issue-agent -o jsonpath='{.items[0].spec.containers[*].name}'
 ```
 
-Expected (after applying the SPIRE patch above):
+Expected:
 
 ```
 agent kagenti-client-registration envoy-proxy spiffe-helper
-```
-
-If the SPIRE patch was not applied, you will see only 3 containers:
-
-```
-agent kagenti-client-registration envoy-proxy
 ```
 
 > **Note:** Both the UI and manual deployments use the same naming conventions:
@@ -566,15 +441,22 @@ You should see `ibm/granite4:latest` (or whichever model you configured) on the 
 If Ollama is not running, start it in a separate terminal (`ollama serve`) and ensure the
 model is pulled (`ollama pull ibm/granite4:latest`).
 
+> **Note:** The `.env.ollama` file defaults to `LLM_API_BASE=http://host.docker.internal:11434`,
+> which reaches Ollama running on your host machine via the Kind/Docker Desktop gateway.
+> If you deploy Ollama inside the cluster instead, patch the agent:
+> ```bash
+> kubectl set env deployment/git-issue-agent -n team1 -c agent \
+>   LLM_API_BASE="http://ollama.ollama.svc:11434"
+> ```
+
 ---
 
 ## Step 8: Chat via Kagenti UI
 
-<!-- WORKAROUND: Remove this limitation note once the Kagenti UI uses the demo realm
-     for agent communication, or once go-processor supports multiple JWKS URLs.
-     Track: https://github.com/kagenti/kagenti-extensions/issues — no issue filed yet. -->
+<!-- WORKAROUND: Remove this limitation note once kagenti-extensions#147 is fixed. -->
 
-> **Known limitation:** The Kagenti UI authenticates via Keycloak's `master` realm,
+> **Known limitation ([kagenti-extensions#147](https://github.com/kagenti/kagenti-extensions/issues/147)):**
+> The Kagenti UI authenticates via Keycloak's `master` realm,
 > but AuthBridge validates inbound JWTs against the `demo` realm JWKS. Since the
 > go-processor currently supports only a single JWKS URL, UI chat requests receive
 > a `401` ("key not found in key set"). The **Agent Card** page works because
@@ -823,19 +705,6 @@ kubectl apply -f demos/github-issue/k8s/configmaps.yaml
 kubectl rollout restart deployment/git-issue-agent -n team1
 ```
 
-### Build Fails: "short-name resolution enforced"
-
-<!-- WORKAROUND: Remove this section once all agent-examples Dockerfiles use FQDN images.
-     Fixed in kagenti/agent-examples#125 (merged). -->
-
-**Symptom:** Shipwright build fails with `Error: creating build container: short-name resolution enforced but cannot prompt without a TTY`
-
-**Cause:** Podman/Buildah requires fully qualified image names (e.g., `docker.io/library/golang:...`)
-but the Dockerfiles use short names.
-
-**Fix:** This was fixed in [kagenti/agent-examples#125](https://github.com/kagenti/agent-examples/pull/125)
-(merged). If you're on an older branch, rebase onto `main`.
-
 ### Agent Missing Environment Variables
 
 **Symptom:** Agent returns `JWKS_URI or GITHUB_TOKEN env var must be set` or similar
@@ -896,13 +765,13 @@ direct curl to the tool gets `Connection reset by peer`.
 
 **Possible causes:**
 
-1. **AuthBridge sidecars injected** — The webhook injected envoy-proxy into the tool
-   pod, causing a port 9090 conflict. Check container count:
+1. **AuthBridge sidecars injected** — If the webhook injected envoy-proxy into the tool
+   pod, the go-processor gRPC server and tool MCP broker both bind to port 9090. Check container count:
    ```bash
    kubectl get pods -n team1 | grep github-tool
    # If you see 3/3 instead of 1/1, sidecars were injected
    ```
-   **Fix:** Follow the [Patch: Remove AuthBridge sidecars](#patch-remove-authbridge-sidecars-from-the-tool) section above.
+   **Fix:** Ensure **Enable AuthBridge sidecar injection** is **unchecked** when importing the tool (Step 4, item 7), then delete and re-import.
 
 2. **Service port mismatch** — Verify the tool service uses port 9090 (matching the agent's `MCP_URL`):
    ```bash
