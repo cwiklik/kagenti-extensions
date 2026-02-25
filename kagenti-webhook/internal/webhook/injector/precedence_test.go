@@ -391,27 +391,27 @@ func TestPrecedenceEvaluator(t *testing.T) {
 			expectClientReg: true,
 		},
 
-		// === SPIRE label requirement tests (spiffe-helper only) ===
+		// === SPIRE label tests (Layer 7 removed — spiffe-helper follows standard chain) ===
 		{
-			name:            "SPIRE label missing - spiffe-helper skipped",
+			name:            "SPIRE label missing - spiffe-helper still injected (Layer 7 removed)",
 			featureGates:    allEnabledGates(),
 			platformConfig:  allEnabledConfig(),
 			namespaceLabels: optedInNamespace(),
 			workloadLabels:  noLabels(),
 			expectEnvoy:     true,
 			expectProxyInit: true,
-			expectSpiffe:    false,
+			expectSpiffe:    true,
 			expectClientReg: true,
 		},
 		{
-			name:            "SPIRE label wrong value - spiffe-helper skipped",
+			name:            "SPIRE label wrong value - spiffe-helper still injected (Layer 7 removed)",
 			featureGates:    allEnabledGates(),
 			platformConfig:  allEnabledConfig(),
 			namespaceLabels: optedInNamespace(),
 			workloadLabels:  map[string]string{SpireEnableLabel: "disabled"},
 			expectEnvoy:     true,
 			expectProxyInit: true,
-			expectSpiffe:    false,
+			expectSpiffe:    true,
 			expectClientReg: true,
 		},
 		{

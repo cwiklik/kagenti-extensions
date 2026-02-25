@@ -181,7 +181,10 @@ func TestInjectAuthBridge_RespectsExistingServiceAccountName(t *testing.T) {
 	}
 }
 
-func TestInjectAuthBridge_NoSACreationWithoutSpire(t *testing.T) {
+func TestInjectAuthBridge_NoSACreationWhenSpiffeHelperDisabled(t *testing.T) {
+	// With opt-in injection, spiffe-helper is injected by default when
+	// kagenti.io/inject=enabled. SA is only skipped when spiffe-helper is
+	// explicitly opted out via its per-sidecar label.
 	ns := &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   "test-ns",
@@ -193,8 +196,9 @@ func TestInjectAuthBridge_NoSACreationWithoutSpire(t *testing.T) {
 
 	podSpec := &corev1.PodSpec{}
 	labels := map[string]string{
-		KagentiTypeLabel:      KagentiTypeAgent,
-		AuthBridgeInjectLabel: AuthBridgeInjectValue,
+		KagentiTypeLabel:        KagentiTypeAgent,
+		AuthBridgeInjectLabel:   AuthBridgeInjectValue,
+		LabelSpiffeHelperInject: "false", // explicitly opt out of spiffe-helper
 	}
 
 	injected, err := m.InjectAuthBridge(ctx, podSpec, "test-ns", "my-agent", labels)
@@ -202,16 +206,16 @@ func TestInjectAuthBridge_NoSACreationWithoutSpire(t *testing.T) {
 		t.Fatalf("InjectAuthBridge() returned error: %v", err)
 	}
 	if !injected {
-		t.Fatal("expected InjectAuthBridge to return true")
+		t.Fatal("expected InjectAuthBridge to return true (other sidecars still inject)")
 	}
 	if podSpec.ServiceAccountName != "" {
-		t.Errorf("expected ServiceAccountName to be empty (SPIRE disabled), got %q", podSpec.ServiceAccountName)
+		t.Errorf("expected ServiceAccountName to be empty when spiffe-helper is disabled, got %q", podSpec.ServiceAccountName)
 	}
 
 	sa := &corev1.ServiceAccount{}
 	err = m.Client.Get(ctx, client.ObjectKey{Namespace: "test-ns", Name: "my-agent"}, sa)
 	if err == nil {
-		t.Error("expected ServiceAccount to NOT be created when SPIRE is disabled")
+		t.Error("expected ServiceAccount to NOT be created when spiffe-helper is disabled")
 	}
 }
 

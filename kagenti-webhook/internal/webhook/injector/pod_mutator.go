@@ -195,7 +195,9 @@ func (m *PodMutator) InjectAuthBridge(ctx context.Context, podSpec *corev1.PodSp
 		return false, nil
 	}
 
-	spireEnabled := IsSpireEnabled(labels)
+	// Derive SPIRE mode from the injection decision: if spiffe-helper is being
+	// injected then SPIRE volumes and a dedicated ServiceAccount are needed.
+	spireEnabled := decision.SpiffeHelper.Inject
 
 	// When SPIRE is enabled, ensure a dedicated ServiceAccount exists so
 	// the SPIFFE ID reflects the workload name instead of "default".
