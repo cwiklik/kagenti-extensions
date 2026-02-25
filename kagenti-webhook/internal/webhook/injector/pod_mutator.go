@@ -145,13 +145,15 @@ func (m *PodMutator) InjectAuthBridge(ctx context.Context, podSpec *corev1.PodSp
 		return false, nil
 	}
 
-	// Global opt-out: kagenti.io/inject=disabled skips injection entirely,
-	// regardless of namespace label or any other layer in the precedence chain.
-	// Only the exact value "disabled" is honoured; unrecognised values fall
-	// through to the precedence evaluator.
-	if labels[AuthBridgeInjectLabel] == AuthBridgeDisabledValue {
-		mutatorLog.Info("Skipping mutation: kagenti.io/inject=disabled",
-			"namespace", namespace, "crName", crName)
+	// Opt-in: injection only proceeds when kagenti.io/inject=enabled is
+	// explicitly set on the workload. A missing label or any other value
+	// (including "disabled") skips injection. This prevents sidecars from
+	// being injected into workloads that never requested them — consistent
+	// with the existing opt-in behaviour of kagenti.io/spire=enabled.
+	if labels[AuthBridgeInjectLabel] != AuthBridgeInjectValue {
+		mutatorLog.Info("Skipping mutation: kagenti.io/inject not set to enabled",
+			"namespace", namespace, "crName", crName,
+			"value", labels[AuthBridgeInjectLabel])
 		return false, nil
 	}
 

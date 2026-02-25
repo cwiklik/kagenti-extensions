@@ -215,6 +215,37 @@ func TestInjectAuthBridge_NoSACreationWithoutSpire(t *testing.T) {
 	}
 }
 
+func TestInjectAuthBridge_NoInjectLabel_SkipsInjection(t *testing.T) {
+	// Label missing entirely — the most common case for tools that never set
+	// kagenti.io/inject. With opt-in semantics this must not inject anything.
+	ns := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   "test-ns",
+			Labels: map[string]string{LabelNamespaceInject: "true"},
+		},
+	}
+	m := newTestMutator(ns)
+	ctx := context.Background()
+
+	podSpec := &corev1.PodSpec{}
+	labels := map[string]string{
+		KagentiTypeLabel: KagentiTypeTool,
+		// kagenti.io/inject deliberately absent
+	}
+
+	injected, err := m.InjectAuthBridge(ctx, podSpec, "test-ns", "my-tool", labels)
+	if err != nil {
+		t.Fatalf("InjectAuthBridge() returned error: %v", err)
+	}
+	if injected {
+		t.Fatal("expected InjectAuthBridge to return false when kagenti.io/inject label is absent")
+	}
+	if len(podSpec.Containers) != 0 || len(podSpec.InitContainers) != 0 {
+		t.Errorf("expected no containers injected, got containers=%v initContainers=%v",
+			podSpec.Containers, podSpec.InitContainers)
+	}
+}
+
 func TestInjectAuthBridge_GlobalOptOut_Agent(t *testing.T) {
 	ns := &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
