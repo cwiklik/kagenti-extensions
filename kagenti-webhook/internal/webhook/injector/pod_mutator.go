@@ -38,7 +38,11 @@ const (
 	// Default configuration (deprecated paths use these directly)
 	DefaultNamespaceAnnotation = "kagenti.dev/inject"
 	DefaultCRAnnotation        = "kagenti.dev/inject"
-	// Label selector for authbridge injection
+	// Label selector for authbridge injection.
+	// Injection uses opt-in semantics: only AuthBridgeInjectValue triggers
+	// injection; any other value (including AuthBridgeDisabledValue, absent,
+	// or unrecognised) skips injection. AuthBridgeDisabledValue is a
+	// conventional opt-out spelling — it is not special-cased in code.
 	AuthBridgeInjectLabel   = "kagenti.io/inject"
 	AuthBridgeInjectValue   = "enabled"
 	AuthBridgeDisabledValue = "disabled"
@@ -120,16 +124,6 @@ func (m *PodMutator) MutatePodSpec(ctx context.Context, podSpec *corev1.PodSpec,
 
 	mutatorLog.Info("Successfully mutated pod spec", "namespace", namespace, "crName", crName, "containers", len(podSpec.Containers), "volumes", len(podSpec.Volumes))
 	return nil
-}
-
-// IsSpireEnabled checks if SPIRE is enabled via the kagenti.io/spire label
-func IsSpireEnabled(labels map[string]string) bool {
-	value, exists := labels[SpireEnableLabel]
-	if !exists {
-		// Default to disabled if label is not present
-		return false
-	}
-	return value == SpireEnabledValue
 }
 
 // InjectAuthBridge evaluates the multi-layer precedence chain and conditionally injects sidecars.
@@ -265,7 +259,7 @@ func (m *PodMutator) InjectAuthBridge(ctx context.Context, podSpec *corev1.PodSp
 
 // DEPRECATED, used by Agent and MCPServer CRs. Remove ShouldMutate after both CRs are deleted and use NeedsMutation instead.
 
-// determines if pod mutation should occur based on annotations and namespace labels
+// ShouldMutate determines if pod mutation should occur based on annotations and namespace labels
 // Priority order:
 // 1. CR annotation (opt-out): kagenti.dev/inject=false
 // 2. CR annotation (opt-in): kagenti.dev/inject=true
@@ -301,6 +295,12 @@ func (m *PodMutator) ShouldMutate(ctx context.Context, namespace string, crAnnot
 	}
 	return false, nil
 }
+
+// NeedsMutation is DEPRECATED (used by Agent and MCPServer CRs only).
+// It uses different opt-in semantics than InjectAuthBridge: when
+// kagenti.io/inject is absent it falls back to namespace-level settings.
+// InjectAuthBridge requires an explicit kagenti.io/inject=enabled label.
+// Do NOT align these — the behavioural difference is intentional.
 func (m *PodMutator) NeedsMutation(ctx context.Context, namespace string, labels map[string]string) (bool, error) {
 	mutatorLog.Info("Checking if mutation should occur", "namespace", namespace, "labels", labels)
 
