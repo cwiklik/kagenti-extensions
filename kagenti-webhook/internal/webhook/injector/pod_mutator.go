@@ -38,7 +38,11 @@ const (
 	// Default configuration (deprecated paths use these directly)
 	DefaultNamespaceAnnotation = "kagenti.dev/inject"
 	DefaultCRAnnotation        = "kagenti.dev/inject"
-	// Label selector for authbridge injection
+	// Label selector for authbridge injection.
+	// Injection uses opt-in semantics: only AuthBridgeInjectValue triggers
+	// injection; any other value (including AuthBridgeDisabledValue, absent,
+	// or unrecognised) skips injection. AuthBridgeDisabledValue is a
+	// conventional opt-out spelling — it is not special-cased in code.
 	AuthBridgeInjectLabel   = "kagenti.io/inject"
 	AuthBridgeInjectValue   = "enabled"
 	AuthBridgeDisabledValue = "disabled"
@@ -122,16 +126,6 @@ func (m *PodMutator) MutatePodSpec(ctx context.Context, podSpec *corev1.PodSpec,
 	return nil
 }
 
-// IsSpireEnabled checks if SPIRE is enabled via the kagenti.io/spire label
-func IsSpireEnabled(labels map[string]string) bool {
-	value, exists := labels[SpireEnableLabel]
-	if !exists {
-		// Default to disabled if label is not present
-		return false
-	}
-	return value == SpireEnabledValue
-}
-
 // InjectAuthBridge evaluates the multi-layer precedence chain and conditionally injects sidecars.
 func (m *PodMutator) InjectAuthBridge(ctx context.Context, podSpec *corev1.PodSpec, namespace, crName string, labels map[string]string) (bool, error) {
 	mutatorLog.Info("InjectAuthBridge called", "namespace", namespace, "crName", crName, "labels", labels)
@@ -142,6 +136,18 @@ func (m *PodMutator) InjectAuthBridge(ctx context.Context, podSpec *corev1.PodSp
 		mutatorLog.Info("Skipping mutation: workload is not an agent or a tool",
 			"hasLabel", hasKagentiLabel,
 			"labelValue", kagentiType)
+		return false, nil
+	}
+
+	// Opt-in: injection only proceeds when kagenti.io/inject=enabled is
+	// explicitly set on the workload. A missing label or any other value
+	// (including "disabled") skips injection. This prevents sidecars from
+	// being injected into workloads that never requested them — consistent
+	// with the existing opt-in behaviour of kagenti.io/spire=enabled.
+	if labels[AuthBridgeInjectLabel] != AuthBridgeInjectValue {
+		mutatorLog.Info("Skipping mutation: kagenti.io/inject not set to enabled",
+			"namespace", namespace, "crName", crName,
+			"value", labels[AuthBridgeInjectLabel])
 		return false, nil
 	}
 
@@ -183,7 +189,9 @@ func (m *PodMutator) InjectAuthBridge(ctx context.Context, podSpec *corev1.PodSp
 		return false, nil
 	}
 
-	spireEnabled := IsSpireEnabled(labels)
+	// Derive SPIRE mode from the injection decision: if spiffe-helper is being
+	// injected then SPIRE volumes and a dedicated ServiceAccount are needed.
+	spireEnabled := decision.SpiffeHelper.Inject
 
 	// When SPIRE is enabled, ensure a dedicated ServiceAccount exists so
 	// the SPIFFE ID reflects the workload name instead of "default".
@@ -251,7 +259,7 @@ func (m *PodMutator) InjectAuthBridge(ctx context.Context, podSpec *corev1.PodSp
 
 // DEPRECATED, used by Agent and MCPServer CRs. Remove ShouldMutate after both CRs are deleted and use NeedsMutation instead.
 
-// determines if pod mutation should occur based on annotations and namespace labels
+// ShouldMutate determines if pod mutation should occur based on annotations and namespace labels
 // Priority order:
 // 1. CR annotation (opt-out): kagenti.dev/inject=false
 // 2. CR annotation (opt-in): kagenti.dev/inject=true
@@ -287,6 +295,12 @@ func (m *PodMutator) ShouldMutate(ctx context.Context, namespace string, crAnnot
 	}
 	return false, nil
 }
+
+// NeedsMutation is DEPRECATED (used by Agent and MCPServer CRs only).
+// It uses different opt-in semantics than InjectAuthBridge: when
+// kagenti.io/inject is absent it falls back to namespace-level settings.
+// InjectAuthBridge requires an explicit kagenti.io/inject=enabled label.
+// Do NOT align these — the behavioural difference is intentional.
 func (m *PodMutator) NeedsMutation(ctx context.Context, namespace string, labels map[string]string) (bool, error) {
 	mutatorLog.Info("Checking if mutation should occur", "namespace", namespace, "labels", labels)
 

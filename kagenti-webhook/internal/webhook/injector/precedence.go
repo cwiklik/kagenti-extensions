@@ -169,8 +169,13 @@ func (e *PrecedenceEvaluator) evaluateSidecar(
 	}
 }
 
-// evaluateSpiffeHelper evaluates the precedence chain for spiffe-helper with an additional SPIRE label requirement.
-// spiffe-helper has a dual requirement: it must pass the standard 6-layer chain AND the workload must have kagenti.io/spire=enabled.
+// evaluateSpiffeHelper evaluates the precedence chain for spiffe-helper.
+// spiffe-helper follows the same standard 6-layer chain as other sidecars.
+// The former Layer 7 SPIRE label requirement (kagenti.io/spire=enabled) has
+// been removed: with opt-in injection (kagenti.io/inject=enabled), the full
+// sidecar stack including spiffe-helper is injected by default.  Use the
+// per-sidecar opt-out label (kagenti.io/spiffe-helper-inject=false) or the
+// feature gate to suppress spiffe-helper specifically.
 func (e *PrecedenceEvaluator) evaluateSpiffeHelper(
 	featureGateEnabled bool,
 	namespaceOptedIn bool,
@@ -178,8 +183,7 @@ func (e *PrecedenceEvaluator) evaluateSpiffeHelper(
 	crdEnabled *bool,
 	platformDefaultEnabled bool,
 ) SidecarDecision {
-	// First, evaluate the standard 6-layer chain
-	decision := e.evaluateSidecar(
+	return e.evaluateSidecar(
 		"spiffe-helper",
 		featureGateEnabled,
 		namespaceOptedIn,
@@ -187,23 +191,4 @@ func (e *PrecedenceEvaluator) evaluateSpiffeHelper(
 		crdEnabled,
 		platformDefaultEnabled,
 	)
-
-	// If any layer said "no", short-circuit
-	if !decision.Inject {
-		return decision
-	}
-
-	// Layer 7 (spiffe-helper only): SPIRE label requirement
-	// Check if kagenti.io/spire=enabled
-	spireLabel, exists := workloadLabels[SpireEnableLabel]
-	if !exists || spireLabel != SpireEnabledValue {
-		return SidecarDecision{
-			Inject: false,
-			Reason: "SPIRE not enabled (missing " + SpireEnableLabel + "=" + SpireEnabledValue + ")",
-			Layer:  "spire-label",
-		}
-	}
-
-	// All gates passed including SPIRE label
-	return decision
 }
