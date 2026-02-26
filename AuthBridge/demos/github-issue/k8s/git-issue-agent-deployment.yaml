@@ -8,7 +8,7 @@
 #                outbound HTTP traffic for token exchange,
 #                outbound HTTPS traffic passed through as-is)
 #
-# The git-issue-agent container:
+# The agent container:
 #   - Runs the A2A GitHub Issue Agent on port 8000
 #   - Calls the GitHub MCP tool via HTTP
 #   - Token exchange to the tool is handled transparently by the AuthBridge sidecar
@@ -35,53 +35,63 @@ metadata:
   name: git-issue-agent
   namespace: team1
   labels:
-    app: git-issue-agent
+    app.kubernetes.io/name: git-issue-agent
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: git-issue-agent
+      app.kubernetes.io/name: git-issue-agent
   template:
     metadata:
       labels:
-        app: git-issue-agent
+        app.kubernetes.io/name: git-issue-agent
         kagenti.io/type: agent
         kagenti.io/inject: enabled
         kagenti.io/spire: enabled
     spec:
       serviceAccountName: git-issue-agent
       containers:
-        - name: git-issue-agent
+        - name: agent
           image: ghcr.io/kagenti/agent-examples/git-issue-agent:latest
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8000
               name: http
           env:
-            # LLM configuration - choose ollama or openai
-            # For Ollama (local LLM):
-            - name: MODEL_PROVIDER
-              value: "ollama"
-            - name: MODEL_NAME
-              value: "ibm/granite4:latest"
-            - name: OLLAMA_HOST
+            # LLM configuration - Ollama (local LLM)
+            # Matches upstream .env.ollama from agent-examples repo
+            - name: TASK_MODEL_ID
+              value: "ollama/ibm/granite4:latest"
+            - name: LLM_API_BASE
               value: "http://ollama.ollama.svc:11434"
+            - name: LLM_API_KEY
+              value: "ollama"
+            - name: MODEL_TEMPERATURE
+              value: "0"
             # For OpenAI (uncomment and set your key):
-            # - name: MODEL_PROVIDER
-            #   value: "openai"
-            # - name: MODEL_NAME
-            #   value: "gpt-4"
+            # - name: TASK_MODEL_ID
+            #   value: "gpt-4.1-nano"
+            # - name: LLM_API_KEY
+            #   valueFrom:
+            #     secretKeyRef:
+            #       name: openai-secret
+            #       key: apikey
             # - name: OPENAI_API_KEY
             #   valueFrom:
             #     secretKeyRef:
             #       name: openai-secret
-            #       key: api-key
+            #       key: apikey
+
+            # Agent service settings
+            - name: SERVICE_PORT
+              value: "8000"
+            - name: LOG_LEVEL
+              value: "DEBUG"
 
             # MCP Tool endpoint - the GitHub tool service
             # AuthBridge will exchange the token when the agent calls this URL
-            # Note: the env var is MCP_URL (not MCP_SERVER_URL) per the agent's config.py
             - name: MCP_URL
-              value: "http://github-tool-service:9090/mcp"
+              value: "http://github-tool-mcp:9090/mcp"
 
             # JWKS URI for validating incoming tokens from Keycloak
             - name: JWKS_URI
@@ -104,13 +114,13 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: git-issue-agent-service
+  name: git-issue-agent
   namespace: team1
 spec:
   selector:
-    app: git-issue-agent
+    app.kubernetes.io/name: git-issue-agent
   ports:
-    - port: 8000
+    - port: 8080
       targetPort: 8000
       protocol: TCP
   type: ClusterIP

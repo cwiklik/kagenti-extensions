@@ -184,6 +184,9 @@ See the [upstream demo](https://github.com/kagenti/kagenti/blob/main/docs/demos/
 
 ### Build and Load Container Images
 
+<!-- WORKAROUND: Remove this section once container images are published to a public
+     registry. Track: https://github.com/kagenti/agent-examples/issues — no issue filed yet. -->
+
 The agent and tool container images must be built locally and loaded into the kind
 cluster (they are not published to a public registry):
 
@@ -365,13 +368,13 @@ kubectl wait --for=condition=available --timeout=180s deployment/git-issue-agent
 Confirm that the webhook injected the AuthBridge sidecars:
 
 ```bash
-kubectl get pod -n team1 -l app=git-issue-agent -o jsonpath='{.items[0].spec.containers[*].name}'
+kubectl get pod -n team1 -l app.kubernetes.io/name=git-issue-agent -o jsonpath='{.items[0].spec.containers[*].name}'
 ```
 
 Expected output (with SPIFFE):
 
 ```txt
-git-issue-agent spiffe-helper kagenti-client-registration envoy-proxy
+agent spiffe-helper kagenti-client-registration envoy-proxy
 ```
 
 ---
@@ -410,17 +413,32 @@ Client registration complete!
 ### Check agent logs
 
 ```bash
-kubectl logs deployment/git-issue-agent -n team1 -c git-issue-agent
+kubectl logs deployment/git-issue-agent -n team1 -c agent
 ```
 
 Expected:
 
 ```
+SVID JWT file /opt/jwt_svid.token not found.
+SVID JWT file /opt/jwt_svid.token not found.
+CLIENT_SECRET file not found at /shared/secret.txt
+INFO: JWKS_URI is set - using JWT Validation middleware
 INFO:     Started server process [17]
 INFO:     Waiting for application startup.
 INFO:     Application startup complete.
 INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
 ```
+
+<!-- WORKAROUND: Remove this warning note once kagenti/agent-examples#129 is fixed. -->
+
+> **These warnings are expected and harmless.** The agent's built-in auth code
+> probes for SVID and client-secret files at startup. With AuthBridge, these files
+> are used by the sidecars (spiffe-helper, client-registration, Envoy), not by the
+> agent container directly. The agent falls back to JWKS-based JWT validation
+> (`JWKS_URI is set`), which is the correct behavior — AuthBridge's Envoy sidecar
+> handles inbound JWT validation and outbound token exchange on behalf of the agent.
+> These warnings will be removed once the agent's built-in auth logic is cleaned up
+> ([kagenti/agent-examples#129](https://github.com/kagenti/agent-examples/issues/129)).
 
 ### Verify Ollama is running
 
@@ -436,7 +454,7 @@ ollama list
 ollama serve
 ```
 
-> **Tip:** If using a different model, update `MODEL_NAME` in
+> **Tip:** If using a different model, update `TASK_MODEL_ID` in
 > `git-issue-agent-deployment.yaml` before deploying.
 
 ---
@@ -454,26 +472,40 @@ kubectl run test-client --image=nicolaka/netshoot -n team1 --restart=Never -- sl
 kubectl wait --for=condition=ready pod/test-client -n team1 --timeout=30s
 ```
 
-### 8a. Inbound Rejection - No Token
+### 8a. Agent Card - Public Endpoint (No Token Required)
+
+The `/.well-known/agent.json` endpoint is publicly accessible — AuthBridge's
+go-processor [bypasses JWT validation](https://github.com/kagenti/kagenti-extensions/pull/133)
+for `/.well-known/*`, `/healthz`, `/readyz`, and `/livez` by default:
 
 ```bash
 kubectl exec test-client -n team1 -- curl -s \
-  http://git-issue-agent-service:8000/.well-known/agent.json
+  http://git-issue-agent:8080/.well-known/agent.json | jq .name
+# Expected: "Github issue agent"
+```
+
+### 8b. Inbound Rejection - No Token
+
+Non-public endpoints require a valid JWT:
+
+```bash
+kubectl exec test-client -n team1 -- curl -s \
+  http://git-issue-agent:8080/
 # Expected: {"error":"unauthorized","message":"missing Authorization header"}
 ```
 
-### 8b. Inbound Rejection - Invalid Token (Signature Check)
+### 8c. Inbound Rejection - Invalid Token
 
 A malformed or tampered token fails the JWKS signature check:
 
 ```bash
 kubectl exec test-client -n team1 -- curl -s \
   -H "Authorization: Bearer invalid-token" \
-  http://git-issue-agent-service:8000/.well-known/agent.json
-# Expected: {"error":"unauthorized","message":"token validation failed: failed to parse/validate token: ..."}
+  http://git-issue-agent:8080/
+# Expected: {"error":"unauthorized","message":"token validation failed: ..."}
 ```
 
-### 8b2. Inbound Rejection - Wrong Issuer
+### 8d. Inbound Rejection - Wrong Issuer
 
 A properly signed token from a **different Keycloak realm** has a valid signature
 (same Keycloak instance) but the wrong `iss` claim. AuthProxy rejects it because
@@ -490,7 +522,7 @@ WRONG_ISSUER_TOKEN=$(kubectl exec test-client -n team1 -- curl -s \
 
 kubectl exec test-client -n team1 -- curl -s \
   -H "Authorization: Bearer $WRONG_ISSUER_TOKEN" \
-  http://git-issue-agent-service:8000/.well-known/agent.json
+  http://git-issue-agent:8080/
 # Expected: {"error":"unauthorized","message":"token validation failed: invalid issuer: expected http://keycloak.localtest.me:8080/realms/demo, got ..."}
 ```
 
@@ -498,7 +530,7 @@ kubectl exec test-client -n team1 -- curl -s \
 > the same Keycloak instance), AuthProxy's issuer check ensures only tokens from the
 > correct realm are accepted. This prevents cross-realm token reuse attacks.
 
-### 8c. Valid Token - Agent Card
+### 8e. Valid Token - Agent Card
 
 ```bash
 # Get the agent's client credentials
@@ -515,7 +547,7 @@ TOKEN=$(kubectl exec test-client -n team1 -- curl -s -X POST \
 
 kubectl exec test-client -n team1 -- curl -s \
   -H "Authorization: Bearer $TOKEN" \
-  http://git-issue-agent-service:8000/.well-known/agent.json | jq
+  http://git-issue-agent:8080/.well-known/agent.json | jq
 ```
 
 ```json
@@ -532,10 +564,9 @@ kubectl exec test-client -n team1 -- curl -s \
 }
 ```
 
-### 8d. Check Inbound Validation Logs
+### 8f. Check Inbound Validation Logs
 
-Verify that AuthProxy validated (and rejected) the inbound requests from steps 8a–8c
-(and 8b2, if you ran it).
+Verify that AuthProxy validated (and rejected) the inbound requests from steps 8b–8e.
 
 > **Tip:** The `envoy-proxy` container runs both Envoy and the go-processor (ext_proc).
 > Inbound validation messages from the go-processor include the `[Inbound]` marker.
@@ -545,19 +576,14 @@ Verify that AuthProxy validated (and rejected) the inbound requests from steps 8
 kubectl logs deployment/git-issue-agent -n team1 -c envoy-proxy 2>&1 | grep "\[Inbound\]"
 ```
 
-Expected (one line per request in 8a–8c):
+Expected (one line per request in 8b–8e):
 
 ```
 [Inbound] Missing Authorization header
 [Inbound] JWT validation failed: failed to parse/validate token: ...
+[Inbound] JWT validation failed: invalid issuer: expected http://keycloak.localtest.me:8080/realms/demo, got ...
 [Inbound] Token validated - issuer: http://keycloak.localtest.me:8080/realms/demo, audience: [...]
 [Inbound] JWT validation succeeded, forwarding request
-```
-
-If you also ran 8b2 (wrong issuer), you should see an additional line:
-
-```
-[Inbound] JWT validation failed: invalid issuer: expected http://keycloak.localtest.me:8080/realms/demo, got ...
 ```
 
 > **Note:** Outbound token exchange logs (`[Token Exchange] ...`) will only appear
@@ -598,7 +624,8 @@ ADMIN_TOKEN=$(curl -s http://keycloak-service.keycloak.svc:8080/realms/master/pr
   -d "password=admin" | jq -r ".access_token")
 
 echo "Admin token length: ${#ADMIN_TOKEN}"
-# If 0, Keycloak is not reachable or credentials are wrong — stop here.
+# Expected: Admin token length: 782
+# If 0 or 4 (null), Keycloak is not reachable or credentials are wrong — stop here.
 
 # Look up the agent's client in the demo realm.
 # The client ID is the SPIFFE ID (URL-encoded in the query parameter).
@@ -613,9 +640,9 @@ echo "Internal ID:   $INTERNAL_ID"
 echo "Client ID:     $CLIENT_ID"
 # If you see "null", the client was not found — check setup_keycloak.py ran.
 
-# Get the client secret
-CLIENT_SECRET=$(curl -s -H "Authorization: Bearer $ADMIN_TOKEN" \
-  "http://keycloak-service.keycloak.svc:8080/admin/realms/demo/clients/$INTERNAL_ID/client-secret" | jq -r ".value")
+# Get the client secret (extract directly from the client listing;
+# the Keycloak /client-secret endpoint returns null for auto-registered clients)
+CLIENT_SECRET=$(echo "$CLIENTS" | jq -r ".[0].secret")
 
 echo "Secret length: ${#CLIENT_SECRET}"
 
@@ -662,7 +689,7 @@ Still inside the test-client pod, send the A2A v0.3.0 request:
 curl -s --max-time 300 \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -X POST http://git-issue-agent-service:8000/ \
+  -X POST http://git-issue-agent:8080/ \
   -d '{
     "jsonrpc": "2.0",
     "id": "test-1",
@@ -689,7 +716,7 @@ If the request timed out but the agent completed the task in the background,
 check the agent logs for the task ID:
 
 ```bash
-kubectl logs deployment/git-issue-agent -n team1 -c git-issue-agent --tail=50
+kubectl logs deployment/git-issue-agent -n team1 -c agent --tail=50
 # Look for: Task <TASK_ID> saved successfully / TaskState.completed
 ```
 
@@ -702,7 +729,7 @@ kubectl exec -it test-client -n team1 -- sh
 curl -s --max-time 10 \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -X POST http://git-issue-agent-service:8000/ \
+  -X POST http://git-issue-agent:8080/ \
   -d '{
     "jsonrpc": "2.0",
     "id": "get-1",
@@ -732,7 +759,7 @@ Expected output:
 [Inbound] JWT validation succeeded, forwarding request
 ```
 
-If you ran the rejection tests (8a, 8b, 8b2), you should also see:
+If you ran the rejection tests (8b, 8c, 8d), you should also see:
 
 ```
 [Inbound] Missing Authorization header
@@ -845,7 +872,7 @@ Run `setup_keycloak.py` to set it up.
 kubectl logs deployment/git-issue-agent -n team1 -c kagenti-client-registration
 kubectl logs deployment/git-issue-agent -n team1 -c spiffe-helper
 kubectl logs deployment/git-issue-agent -n team1 -c envoy-proxy
-kubectl logs deployment/git-issue-agent -n team1 -c git-issue-agent
+kubectl logs deployment/git-issue-agent -n team1 -c agent
 ```
 
 ### GitHub Tool Returns 401
@@ -880,6 +907,7 @@ kubectl rollout restart deployment/git-issue-agent -n team1
 kubectl delete -f demos/github-issue/k8s/git-issue-agent-deployment.yaml
 kubectl delete -f demos/github-issue/k8s/github-tool-deployment.yaml
 kubectl delete secret github-tool-secrets -n team1
+kubectl delete pod test-client -n team1 --ignore-not-found
 ```
 
 ### Delete ConfigMaps

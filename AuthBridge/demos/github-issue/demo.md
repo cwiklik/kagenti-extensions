@@ -12,7 +12,7 @@ by replacing manual token handling with AuthBridge's automatic token exchange.
 | Guide | Description | Best For |
 |-------|-------------|----------|
 | **[Manual Deployment](demo-manual.md)** | Deploy everything via `kubectl` and YAML manifests | Full control, debugging, understanding internals |
-| **UI Deployment** *(coming soon)* | Import agent and tool via the Kagenti dashboard | Quick start, UI-driven workflow |
+| **[UI Deployment](demo-ui.md)** | Import agent and tool via the Kagenti dashboard | Quick start, UI-driven workflow |
 
 Both guides share the same infrastructure setup (webhook, Keycloak, ConfigMaps) and
 produce identical AuthBridge security behavior.
@@ -38,28 +38,35 @@ produce identical AuthBridge security behavior.
 ```
 
 The agent pod includes four containers:
-- **git-issue-agent** — the A2A agent
+- **agent** — the A2A agent (port 8000)
 - **spiffe-helper** — fetches SPIFFE credentials from SPIRE
 - **kagenti-client-registration** — registers the agent with Keycloak
 - **envoy-proxy** — intercepts traffic for JWT validation and token exchange
 
 ## Key Differences Between Deployment Methods
 
+Both methods produce identical Kubernetes resources (same service names, ports, container
+names, and labels). The only difference is *how* you deploy:
+
 | Aspect | Manual | UI |
 |--------|--------|----|
 | **Agent deployment** | `kubectl apply -f` YAML | Kagenti UI "Import New Agent" |
 | **Tool deployment** | `kubectl apply -f` YAML | Kagenti UI "Import New Tool" |
 | **Image source** | Pre-built (`ghcr.io/kagenti/...`) | Built from source via Shipwright |
-| **Agent service** | `git-issue-agent-service:8000` | `git-issue-agent:8080` |
-| **Container name** | `git-issue-agent` | `agent` |
 | **Primary interaction** | CLI (`curl` via test-client pod) | Kagenti UI chat |
 | **Env var configuration** | In YAML manifests | UI form + optional `kubectl patch` |
+
+Common names used by both:
+- Agent service: `git-issue-agent:8080` (targetPort 8000)
+- Agent container: `agent`
+- Tool service: `github-tool-mcp:9090`
 
 ## Files Reference
 
 | File | Description |
 |------|-------------|
 | [demo-manual.md](demo-manual.md) | Full manual deployment guide |
+| [demo-ui.md](demo-ui.md) | UI-driven deployment guide |
 | [setup_keycloak.py](setup_keycloak.py) | Keycloak configuration script |
 | [k8s/configmaps.yaml](k8s/configmaps.yaml) | ConfigMaps for AuthBridge sidecars |
 | [k8s/git-issue-agent-deployment.yaml](k8s/git-issue-agent-deployment.yaml) | Agent deployment YAML (manual) |
