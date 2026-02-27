@@ -252,10 +252,38 @@ tail -f /dev/null
 	}
 }
 
-// BuildEnvoyProxyContainer creates the envoy-proxy sidecar container
-// This container intercepts inbound traffic (JWT validation) and outbound traffic (token exchange) via ext-proc
+// BuildEnvoyProxyContainer creates the envoy-proxy sidecar container with SPIRE enabled (default).
+// This container intercepts inbound traffic (JWT validation) and outbound traffic (token exchange) via ext-proc.
 func (b *ContainerBuilder) BuildEnvoyProxyContainer() corev1.Container {
-	builderLog.Info("building EnvoyProxy Container")
+	return b.BuildEnvoyProxyContainerWithSpireOption(true)
+}
+
+// BuildEnvoyProxyContainerWithSpireOption creates the envoy-proxy sidecar container.
+// When spireEnabled is true, the svid-output volume is mounted (read-only) so the
+// go-processor can read the SPIFFE JWT SVID for use as a subject token in RFC 8693
+// token exchange on outbound requests.
+func (b *ContainerBuilder) BuildEnvoyProxyContainerWithSpireOption(spireEnabled bool) corev1.Container {
+	builderLog.Info("building EnvoyProxy Container", "spireEnabled", spireEnabled)
+
+	volumeMounts := []corev1.VolumeMount{
+		{
+			Name:      "envoy-config",
+			MountPath: "/etc/envoy",
+			ReadOnly:  true,
+		},
+		{
+			Name:      "shared-data",
+			MountPath: "/shared",
+			ReadOnly:  true,
+		},
+	}
+	if spireEnabled {
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{
+			Name:      "svid-output",
+			MountPath: "/opt",
+			ReadOnly:  true,
+		})
+	}
 
 	return corev1.Container{
 		Name:            EnvoyProxyContainerName,
@@ -358,18 +386,7 @@ func (b *ContainerBuilder) BuildEnvoyProxyContainer() corev1.Container {
 			RunAsUser:  ptr.To(b.cfg.Proxy.UID),
 			RunAsGroup: ptr.To(b.cfg.Proxy.UID),
 		},
-		VolumeMounts: []corev1.VolumeMount{
-			{
-				Name:      "envoy-config",
-				MountPath: "/etc/envoy",
-				ReadOnly:  true,
-			},
-			{
-				Name:      "shared-data",
-				MountPath: "/shared",
-				ReadOnly:  true,
-			},
-		},
+		VolumeMounts: volumeMounts,
 	}
 }
 
