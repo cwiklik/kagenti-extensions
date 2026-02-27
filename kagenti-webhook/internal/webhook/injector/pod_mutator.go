@@ -199,7 +199,7 @@ func (m *PodMutator) InjectAuthBridge(ctx context.Context, podSpec *corev1.PodSp
 
 	// Conditionally inject sidecars based on precedence decisions
 	if decision.EnvoyProxy.Inject && !containerExists(podSpec.Containers, EnvoyProxyContainerName) {
-		podSpec.Containers = append(podSpec.Containers, builder.BuildEnvoyProxyContainer())
+		podSpec.Containers = append(podSpec.Containers, builder.BuildEnvoyProxyContainerWithSpireOption(spireEnabled))
 	}
 
 	if decision.ProxyInit.Inject && !containerExists(podSpec.InitContainers, ProxyInitContainerName) {
@@ -335,7 +335,7 @@ func (m *PodMutator) InjectSidecarsWithSpireOption(podSpec *corev1.PodSpec, name
 
 	// Check and inject envoy-proxy sidecar
 	if !containerExists(podSpec.Containers, EnvoyProxyContainerName) {
-		podSpec.Containers = append(podSpec.Containers, m.Builder.BuildEnvoyProxyContainer())
+		podSpec.Containers = append(podSpec.Containers, m.Builder.BuildEnvoyProxyContainerWithSpireOption(spireEnabled))
 	}
 
 	return nil
