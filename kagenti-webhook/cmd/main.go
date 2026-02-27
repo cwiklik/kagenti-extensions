@@ -282,7 +282,6 @@ func main() {
 
 	// nolint:goconst
 	if os.Getenv("ENABLE_WEBHOOKS") != "false" {
-
 		// Setup Agent webhook
 		if err = webhookv1alpha1.SetupAgentWebhookWithManager(mgr, podMutator); err != nil {
 			setupLog.Error(err, "unable to create webhook", "webhook", "Agent")
