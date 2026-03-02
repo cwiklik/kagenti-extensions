@@ -13,6 +13,21 @@ webhooks:
       path: /mutate-workloads-authbridge
   failurePolicy: Fail
   name: inject.kagenti.io
+  namespaceSelector:
+    matchExpressions:
+    # Exclude kube-system and other critical namespaces
+    - key: kubernetes.io/metadata.name
+      operator: NotIn
+      values:
+      - kube-system
+      - kube-public
+      - kube-node-lease
+    # trigger for namespaces not explicitly disabled
+    - key: kagenti-enabled
+      operator: NotIn
+      values:
+      - "false"
+  timeoutSeconds: 10
   rules:
   - apiGroups:
     - apps
