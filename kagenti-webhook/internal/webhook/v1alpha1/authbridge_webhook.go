@@ -170,16 +170,16 @@ func (w *AuthBridgeWebhook) isAlreadyInjected(podSpec *corev1.PodSpec) bool {
 	// Check sidecar containers. Any one of these being present means the full
 	// injection cycle already ran for this pod (each Build* call is guarded by
 	// containerExists/volumeExists checks for idempotency).
-	for _, container := range podSpec.Containers {
-		if container.Name == injector.EnvoyProxyContainerName ||
-			container.Name == injector.SpiffeHelperContainerName ||
-			container.Name == injector.ClientRegistrationContainerName {
+	for i := range podSpec.Containers {
+		if podSpec.Containers[i].Name == injector.EnvoyProxyContainerName ||
+			podSpec.Containers[i].Name == injector.SpiffeHelperContainerName ||
+			podSpec.Containers[i].Name == injector.ClientRegistrationContainerName {
 			return true
 		}
 	}
 	// Also check init containers — proxy-init is always injected by InjectAuthBridge
-	for _, container := range podSpec.InitContainers {
-		if container.Name == injector.ProxyInitContainerName {
+	for i := range podSpec.InitContainers {
+		if podSpec.InitContainers[i].Name == injector.ProxyInitContainerName {
 			return true
 		}
 	}

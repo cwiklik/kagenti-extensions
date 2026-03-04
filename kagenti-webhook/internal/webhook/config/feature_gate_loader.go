@@ -2,6 +2,7 @@ package config
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -49,11 +50,11 @@ func (l *FeatureGateLoader) Load() error {
 			}
 			return nil
 		}
-		return err
+		return fmt.Errorf("reading feature gates file %s: %w", l.configPath, err)
 	}
 
 	if err := yaml.Unmarshal(data, gates); err != nil {
-		return err
+		return fmt.Errorf("parsing feature gates file %s: %w", l.configPath, err)
 	}
 
 	l.mu.Lock()
@@ -96,12 +97,12 @@ func (l *FeatureGateLoader) Watch(ctx context.Context) error {
 
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
-		return err
+		return fmt.Errorf("creating feature gates file watcher: %w", err)
 	}
 
 	if err := watcher.Add(dir); err != nil {
 		watcher.Close()
-		return err
+		return fmt.Errorf("watching feature gates directory %s: %w", dir, err)
 	}
 
 	log.Info("Watching feature gates directory for changes", "dir", dir)
@@ -171,6 +172,7 @@ func logFeatureGates(fg *FeatureGates, source string) {
 		"envoyProxy", fg.EnvoyProxy,
 		"spiffeHelper", fg.SpiffeHelper,
 		"clientRegistration", fg.ClientRegistration,
+		"injectTools", fg.InjectTools,
 	)
 	log.Info("=============================================")
 }
