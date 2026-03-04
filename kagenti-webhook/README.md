@@ -10,8 +10,10 @@ The webhook injects:
 
 1. **`proxy-init`** (init container) - Configures iptables rules for traffic interception
 2. **`envoy-proxy`** - Service mesh proxy for traffic management
-3. **`spiffe-helper`** (injected by default; opt out with `kagenti.io/spire: disabled`) - Obtains SPIFFE Verifiable Identity Documents (SVIDs) from the SPIRE agent via the Workload API
-4. **`kagenti-client-registration`** (injected by default; skips SVID exchange when spiffe-helper is opted out) - Registers the resource as an OAuth2 client in Keycloak using the SPIFFE identity
+3. **`spiffe-helper`** - Obtains SPIFFE Verifiable Identity Documents (SVIDs) from the SPIRE agent via the Workload API
+4. **`kagenti-client-registration`** - Registers the resource as an OAuth2 client in Keycloak using the SPIFFE identity
+
+All four sidecars are injected by default for eligible agent workloads. Each can be disabled independently via feature gates or per-workload labels.
 
 ### Why Sidecar Injection?
 
@@ -31,28 +33,35 @@ The **AuthBridge webhook** supports standard Kubernetes workload resources:
 
 ## Injection Control
 
-The webhook supports flexible injection control via a multi-layer precedence system. Each sidecar's injection decision is evaluated independently through a chain of layers, where the first "no" short-circuits.
+Injection is evaluated in two stages. Any "no" at Stage 1 skips all injection immediately. Within Stage 2, each sidecar is evaluated independently.
 
-### Precedence Chain
+### Stage 1 — Workload pre-filters (PodMutator)
 
-For the AuthBridge webhook, each sidecar (`envoy-proxy`, `spiffe-helper`, `client-registration`) is evaluated through this chain:
+Evaluated in order for every admission request:
+
+| # | Check | How to configure | Skip condition |
+| --- | --- | --- | --- |
+| 1 | **Workload type** | `kagenti.io/type: agent` or `tool` label on workload | Label absent or value is not `agent`/`tool` |
+| 2 | **Global kill switch** | `featureGates.globalEnabled` in Helm values | `false` — disables ALL injection cluster-wide |
+| 3 | **Tool gate** | `featureGates.injectTools` in Helm values | Type is `tool` AND gate is `false` (default) |
+| 4 | **Whole-workload opt-out** | `kagenti.io/inject: disabled` on workload | Label explicitly set to `disabled` |
+
+No namespace label is required. Agents are injected by default; tools are not (opt-in via `featureGates.injectTools: true`).
+
+### Stage 2 — Per-sidecar precedence chain (PrecedenceEvaluator)
+
+Once past Stage 1, each of the three sidecars runs independently through a two-layer chain. `proxy-init` is not evaluated separately — it always mirrors the `envoy-proxy` decision.
 
 ```text
-Global Feature Gate → Per-Sidecar Feature Gate → Namespace Label → Workload Label → TokenExchange CR → Platform Defaults → Inject
-                                                                                     (spiffe-helper only: SPIRE opt-out label)
+Per-Sidecar Feature Gate → Workload Opt-Out Label → Inject
 ```
 
 | Layer | Scope | How to configure | Effect |
 | --- | --- | --- | --- |
-| 1. Global Feature Gate | Cluster-wide | `featureGates.globalEnabled` in Helm values | Kill switch — disables ALL sidecar injection |
-| 2. Per-Sidecar Feature Gate | Cluster-wide, per sidecar | `featureGates.envoyProxy`, `.spiffeHelper`, `.clientRegistration` in Helm values | Disables a specific sidecar cluster-wide |
-| 3. Namespace Label | Namespace | `kagenti-enabled: "true"` label on namespace | Required — namespaces without this label receive no injection |
-| 4. Workload Label | Per-workload, per sidecar | `kagenti.io/envoy-proxy-inject: "false"` (etc.) on pod template | Disables a specific sidecar for one workload |
-| 5. TokenExchange CR | Per-workload | TokenExchange CR (stub — not yet implemented) | CR override takes precedence over platform defaults |
-| 6. Platform Defaults | Cluster-wide, per sidecar | `defaults.sidecars.<sidecar>.enabled` in Helm values | Lowest-priority default; all sidecars enabled by default |
-| 7. SPIRE opt-out *(spiffe-helper only)* | Per-workload | `kagenti.io/spire: "disabled"` on pod template | Blocks spiffe-helper injection for that workload |
+| 1. Per-sidecar feature gate | Cluster-wide, per sidecar | `featureGates.envoyProxy`, `.spiffeHelper`, `.clientRegistration` | Disables a specific sidecar cluster-wide |
+| 2. Workload opt-out label | Per-workload, per sidecar | `kagenti.io/<sidecar>-inject: "false"` on pod template | Disables a specific sidecar for that workload |
 
-All sidecars are injected **by default** when the namespace has `kagenti-enabled=true`. The `proxy-init` init container always follows the `envoy-proxy` decision (it is required for envoy to function).
+`proxy-init` always follows the `envoy-proxy` decision and is never independently controlled.
 
 ### Feature Gates
 
@@ -65,97 +74,68 @@ featureGates:
   envoyProxy: true           # Set to false to disable envoy-proxy cluster-wide
   spiffeHelper: true         # Set to false to disable spiffe-helper cluster-wide
   clientRegistration: true   # Set to false to disable client-registration cluster-wide
-```
-
-### Namespace-Level Injection
-
-Enable injection for all eligible workloads in a namespace:
-
-```yaml
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: my-apps
-  labels:
-    kagenti-enabled: "true"  # All eligible workloads in this namespace get sidecars
+  injectTools: false         # Set to true to enable injection for tool workloads
 ```
 
 ### Workload-Level Control
 
-Workloads must have the `kagenti.io/type` label set to `agent` or `tool` to be eligible for injection. Without this label, injection is always skipped.
+Workloads must have the `kagenti.io/type` label set to `agent` or `tool` to be eligible for injection. Without this label, injection is always skipped. No namespace label is required.
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-agent
+  namespace: my-apps
+spec:
+  template:
+    metadata:
+      labels:
+        app: my-agent
+        kagenti.io/type: agent   # Required: identifies workload as an agent (injected by default)
+    spec:
+      containers:
+      - name: app
+        image: my-app:latest
+```
+
+To opt a workload out of all injection:
+
+```yaml
+labels:
+  kagenti.io/type: agent
+  kagenti.io/inject: disabled   # Skips all sidecar injection for this workload
+```
+
+### Per-Sidecar Workload Labels
+
+Individual sidecars can be disabled per-workload using these labels on the pod template. Setting a label to `"false"` opts that workload out of the corresponding sidecar.
+
+| Label | Controls |
+| --- | --- |
+| `kagenti.io/envoy-proxy-inject: "false"` | Disables envoy-proxy (and proxy-init) |
+| `kagenti.io/spiffe-helper-inject: "false"` | Disables spiffe-helper (and SPIRE volumes/SA) |
+| `kagenti.io/client-registration-inject: "false"` | Disables client-registration |
+
+Example — inject envoy and spiffe-helper, but not client-registration:
 
 ```yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: my-app
-  namespace: my-apps       # Namespace must have kagenti-enabled=true
-spec:
-  template:
-    metadata:
-      labels:
-        app: my-app
-        kagenti.io/type: agent        # Required: Identifies workload type (agent or tool)
-        # kagenti.io/spire: disabled  # Optional: Add this label to opt out of spiffe-helper injection
-    spec:
-      containers:
-      - name: app
-        image: my-app:latest
-```
-
-### Per-Sidecar Workload Labels
-
-Individual sidecars can be disabled per-workload using these labels on the pod template:
-
-| Label | Controls |
-| --- | --- |
-| `kagenti.io/envoy-proxy-inject: "false"` | Disables envoy-proxy (and proxy-init) |
-| `kagenti.io/spiffe-helper-inject: "false"` | Disables spiffe-helper |
-| `kagenti.io/client-registration-inject: "false"` | Disables client-registration |
-
-Example — disable envoy-proxy for a specific workload:
-
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: no-envoy-app
   namespace: my-apps
 spec:
   template:
     metadata:
       labels:
         kagenti.io/type: agent
-        kagenti.io/envoy-proxy-inject: "false"   # Skip envoy for this workload
+        kagenti.io/client-registration-inject: "false"
     spec:
       containers:
       - name: app
         image: my-app:latest
 ```
-
-### SPIRE Integration Opt-Out
-
-`spiffe-helper` is injected by default when all precedence layers pass. To opt a specific workload out of SPIRE integration, set `kagenti.io/spire: disabled` on the pod template:
-
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: my-app-no-spire
-  namespace: my-apps
-spec:
-  template:
-    metadata:
-      labels:
-        kagenti.io/type: agent
-        kagenti.io/spire: disabled  # Opt this workload out of spiffe-helper injection
-    spec:
-      containers:
-      - name: app
-        image: my-app:latest
-```
-
-Without this label (or with any value other than `disabled`), spiffe-helper is injected whenever the standard 6-layer precedence chain permits it.
 
 ### Platform Configuration
 
@@ -167,7 +147,7 @@ defaults:
   images:
     envoyProxy: ghcr.io/kagenti/kagenti-extensions/envoy-with-processor:latest
     proxyInit: ghcr.io/kagenti/kagenti-extensions/proxy-init:latest
-    spiffeHelper: ghcr.io/spiffe/spiffe-helper:nightly
+    spiffeHelper: ghcr.io/spiffe/spiffe-helper:0.11.0
     clientRegistration: ghcr.io/kagenti/kagenti-extensions/client-registration:latest
     pullPolicy: IfNotPresent
   proxy:
@@ -194,9 +174,9 @@ If the ConfigMap is not available, compiled defaults are used as a fallback.
 
 The AuthBridge webhook supports two modes of operation:
 
-#### With SPIRE Integration (`kagenti.io/spire: enabled` label)
+#### With SPIRE Integration
 
-```
+```text
 ┌────────────────────────────────────────────────────────────────┐
 │                    Kubernetes Workload Pod                     │
 │                                                                │
@@ -229,9 +209,9 @@ The AuthBridge webhook supports two modes of operation:
                        (OAuth2/OIDC)        (via Envoy proxy)
 ```
 
-#### Without SPIRE Integration (opt-out via `kagenti.io/spire: disabled`)
+#### Without SPIRE Integration (opt-out via `kagenti.io/spiffe-helper-inject: "false"`)
 
-```
+```text
 ┌────────────────────────────────────────────────────────────────┐
 │                    Kubernetes Workload Pod                     │
 │                                                                │
@@ -281,7 +261,7 @@ The AuthBridge webhook injects the following containers into Kubernetes workload
 - **Resources**: 50m CPU / 64Mi memory (request), 200m CPU / 256Mi memory (limit)
 - **Ports**: 15123 (envoy-outbound), 9901 (admin), 9090 (ext-proc)
 
-**Injected when `kagenti.io/spire: enabled` label is set:**
+**Injected by default (opt out with `kagenti.io/spiffe-helper-inject: "false"`):**
 
 ##### 3. SPIFFE Helper (`spiffe-helper`) - Sidecar Container
 
@@ -310,7 +290,6 @@ The webhook automatically adds these volumes:
 - **`spiffe-helper-config`** - ConfigMap containing SPIFFE helper configuration (when SPIRE enabled)
 - **`svid-output`** - EmptyDir for SVID token exchange between sidecars (when SPIRE enabled)
 - **`envoy-config`** - ConfigMap containing Envoy configuration
-
 
 ## Getting Started
 
@@ -363,7 +342,7 @@ The script handles the full build-and-deploy cycle:
 3. Deploys the platform defaults ConfigMap (`kagenti-webhook-defaults`)
 4. Deploys the feature gates ConfigMap (`kagenti-webhook-feature-gates`)
 5. Updates the deployment image and patches in config volume mounts
-6. Creates the AuthBridge `MutatingWebhookConfiguration` if it doesn't exist
+6. Applies the AuthBridge `MutatingWebhookConfiguration` (always, so updates take effect on re-runs)
 
 ```bash
 cd kagenti-webhook
@@ -390,6 +369,22 @@ Environment variables:
 | `AUTHBRIDGE_DEMO` | `false` | Set to `true` to create demo namespace + ConfigMaps |
 | `AUTHBRIDGE_NAMESPACE` | `team1` | Namespace for AuthBridge demo workloads |
 
+### Testing the Precedence System
+
+`scripts/test-precedence.sh` is an automated end-to-end test runner for the two-stage sidecar injection precedence system. It deploys workloads into a Kind cluster and validates that each layer of the decision chain behaves correctly.
+
+```bash
+cd kagenti-webhook
+
+# Run against the default Kind cluster (cluster name: kagenti, namespace: team1)
+./scripts/test-precedence.sh
+
+# Override namespace or cluster
+NS=my-ns CLUSTER=my-cluster ./scripts/test-precedence.sh
+```
+
+The script accelerates ConfigMap volume propagation by patching the kubelet's `syncFrequency` to `10s` before the tests run, restoring it automatically via an `EXIT` trap when the tests finish.
+
 ### Webhook Configuration
 
 The webhook can be configured via Helm values or command-line flags:
@@ -403,7 +398,6 @@ webhook:
   certKey: tls.key
   port: 9443
 ```
-
 
 ## Development
 
@@ -421,11 +415,10 @@ internal/webhook/
 │   └── feature_gate_loader.go       # Feature gates loader with hot-reload
 ├── injector/                        # Shared mutation logic
 │   ├── pod_mutator.go               # Core mutation engine + InjectAuthBridge
-│   ├── precedence.go                # Multi-layer precedence evaluator
+│   ├── precedence.go                # Per-sidecar 2-layer precedence evaluator
 │   ├── precedence_test.go           # Table-driven precedence tests
 │   ├── injection_decision.go        # SidecarDecision, InjectionDecision types
-│   ├── tokenexchange_overrides.go   # TokenExchange CR stub (future use)
-│   ├── namespace_checker.go         # Namespace label inspection
+│   ├── constants.go                 # Label constants
 │   ├── container_builder.go         # Build sidecars & init containers
 │   └── volume_builder.go            # Build volumes
 └── v1alpha1/
@@ -455,7 +448,9 @@ Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+```text
+http://www.apache.org/licenses/LICENSE-2.0
+```
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,

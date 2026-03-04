@@ -23,9 +23,6 @@ You should see log lines confirming both configs loaded successfully.
 With all gates enabled and namespace opted in, a workload with `kagenti.io/type=agent` should get all sidecars — including `spiffe-helper` — without any additional labels.
 
 ```bash
-# Ensure namespace is opted in
-kubectl label namespace team1 kagenti-enabled=true --overwrite
-
 # Deploy a test workload — no SPIRE label needed; spiffe-helper is injected by default
 kubectl apply -n team1 -f - <<'EOF'
 apiVersion: apps/v1
@@ -98,7 +95,7 @@ sleep 10
 kubectl get pods -n team1 -l app=test-no-envoy -o jsonpath='{range .items[*]}{.spec.initContainers[*].name}{"\n"}{.spec.containers[*].name}{"\n"}{end}'
 ```
 
-**Expected**: No `proxy-init`, no `envoy-proxy`. Should have `spiffe-helper` and `kagenti-client-registration` (spiffe-helper is injected by default; add `kagenti.io/spire: disabled` to suppress it).
+**Expected**: No `proxy-init`, no `envoy-proxy`. Should have `spiffe-helper` and `kagenti-client-registration` (spiffe-helper is injected by default; add `kagenti.io/spiffe-helper-inject: "false"` to the pod template to suppress it).
 
 Restore the gate afterward:
 
@@ -190,29 +187,29 @@ kubectl edit configmap kagenti-webhook-feature-gates -n kagenti-webhook-system
 # Change globalEnabled: false → globalEnabled: true
 ```
 
-## Test 6: Namespace Not Opted In
+## Test 6: Whole-Workload Opt-Out
+
+Deploy with `kagenti.io/inject: "disabled"` on the pod template to skip all sidecar injection (Stage 1 pre-filter):
 
 ```bash
-kubectl create namespace test-no-optin --dry-run=client -o yaml | kubectl apply -f -
-# Do NOT label it with kagenti-enabled=true
-
-kubectl apply -n test-no-optin -f - <<'EOF'
+kubectl apply -n team1 -f - <<'EOF'
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: test-no-optin
+  name: test-inject-disable
   labels:
     kagenti.io/type: agent
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: test-no-optin
+      app: test-inject-disable
   template:
     metadata:
       labels:
-        app: test-no-optin
+        app: test-inject-disable
         kagenti.io/type: agent
+        kagenti.io/inject: "disabled"
     spec:
       containers:
       - name: app
@@ -221,10 +218,10 @@ spec:
 EOF
 
 sleep 10
-kubectl get pods -n test-no-optin -l app=test-no-optin -o jsonpath='{range .items[*]}{.spec.initContainers[*].name}{"\n"}{.spec.containers[*].name}{"\n"}{end}'
+kubectl get pods -n team1 -l app=test-inject-disable -o jsonpath='{range .items[*]}{.spec.initContainers[*].name}{"\n"}{.spec.containers[*].name}{"\n"}{end}'
 ```
 
-**Expected**: Only `app`. No injection because the namespace webhook selector requires `kagenti-enabled=true`.
+**Expected**: Only `app`. No sidecars injected — the whole-workload opt-out label causes the webhook to skip the workload at Stage 1.
 
 ## Test 7: Check Decision Logs
 
