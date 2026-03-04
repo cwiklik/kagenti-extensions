@@ -31,8 +31,6 @@ graph TB
             DS[DaemonSets]
             JOB[Jobs/CronJobs]
         end
-
-        NAMESPACE[Namespace<br/>with labels/annotations]
     end
 
     API -->|mutate workloads| AUTH
@@ -44,7 +42,6 @@ graph TB
 
     MUTATOR -->|builds containers| CONT
     MUTATOR -->|builds volumes| VOL
-    MUTATOR -->|reads labels| NAMESPACE
 
     AUTH -.->|modifies| DEPLOY
     AUTH -.->|modifies| STS
@@ -63,9 +60,9 @@ graph TB
 
 ## Container Injection Flow
 
-### With SPIRE Integration
+### Default (all sidecars injected)
 
-When `kagenti.io/spire: enabled` label is set on the pod template:
+All four sidecars are injected when no opt-out labels are present:
 
 ```mermaid
 graph LR
@@ -99,9 +96,9 @@ graph LR
     style APP fill:#87CEEB
 ```
 
-### AuthBridge Webhook - Without SPIRE Integration (opt-out)
+### Without SPIRE (opt-out via `kagenti.io/spiffe-helper-inject: "false"`)
 
-When `kagenti.io/spire: disabled` is set on the workload:
+When spiffe-helper is disabled, only envoy-proxy and proxy-init are injected:
 
 ```mermaid
 graph LR
@@ -127,63 +124,53 @@ graph LR
 
 ```mermaid
 graph TD
-    START[Webhook Receives<br/>Admission Request]
+    START[Webhook Receives Admission Request]
 
-    CHECK_TYPE{kagenti.io/type<br/>= agent or tool?}
-
-    subgraph "AuthBridge Path (Recommended)"
-        WORKLOAD[Standard Workload<br/>Deploy/STS/DS/Job]
-        CHECK_KAGENTI_TYPE{kagenti.io/type:<br/>agent or tool?}
-        CHECK_NS_AB{Namespace has<br/>kagenti-enabled=true?}
-        PRECEDENCE[7-Layer Precedence Evaluator<br/>L1: global feature gate<br/>L2: per-sidecar feature gate<br/>L3: namespace label<br/>L4: workload labels<br/>L5: TokenExchange CR<br/>L6: platform defaults<br/>L7: kagenti.io/spire=disabled opts out spiffe-helper]
-        INJECT_FULL[Inject sidecars per decision<br/>proxy-init, envoy-proxy,<br/>spiffe-helper, client-registration]
+    subgraph "Stage 1 — PodMutator pre-filters"
+        CHECK_TYPE{kagenti.io/type\n= agent or tool?}
+        CHECK_GLOBAL{featureGates\n.globalEnabled?}
+        CHECK_TOOLS{type=tool AND\nfeatureGates.injectTools=false?}
+        CHECK_OPTOUT{kagenti.io/inject\n= disabled?}
     end
 
-    subgraph "Legacy Path (Deprecated)"
-        CUSTOM[Custom Resource<br/>Agent/MCPServer CR]
-        CHECK_NS_LEG{Namespace has<br/>kagenti-enabled=true?}
-        CHECK_ANNO{CR has<br/>kagenti.io/inject=enabled?}
-        INJECT_SPIRE[Inject: spiffe-helper<br/>client-registration]
+    subgraph "Stage 2 — PrecedenceEvaluator per sidecar"
+        EVAL[Per-sidecar 2-layer chain\nL1: per-sidecar feature gate\nL2: workload opt-out label]
+        INJECT[Inject sidecars per decision\nproxy-init follows envoy-proxy]
     end
 
     SKIP[Skip Injection]
 
     START --> CHECK_TYPE
-    CHECK_TYPE -->|Workload| WORKLOAD
-    CHECK_TYPE -->|CR| CUSTOM
+    CHECK_TYPE -->|No| SKIP
+    CHECK_TYPE -->|Yes| CHECK_GLOBAL
+    CHECK_GLOBAL -->|false| SKIP
+    CHECK_GLOBAL -->|true| CHECK_TOOLS
+    CHECK_TOOLS -->|Yes| SKIP
+    CHECK_TOOLS -->|No| CHECK_OPTOUT
+    CHECK_OPTOUT -->|disabled| SKIP
+    CHECK_OPTOUT -->|other/absent| EVAL
+    EVAL --> INJECT
 
-    WORKLOAD --> CHECK_KAGENTI_TYPE
-    CHECK_KAGENTI_TYPE -->|Yes| CHECK_NS_AB
-    CHECK_KAGENTI_TYPE -->|No| SKIP
-    CHECK_NS_AB -->|Yes| PRECEDENCE
-    CHECK_NS_AB -->|No| SKIP
-    PRECEDENCE --> INJECT_FULL
-
-    CUSTOM --> CHECK_NS_LEG
-    CHECK_NS_LEG -->|Yes| CHECK_ANNO
-    CHECK_NS_LEG -->|No| CHECK_ANNO
-    CHECK_ANNO -->|true| INJECT_SPIRE
-    CHECK_ANNO -->|false| SKIP
-    CHECK_ANNO -->|not set & ns=true| INJECT_SPIRE
-    CHECK_ANNO -->|not set & ns=false| SKIP
-
-    style INJECT_FULL fill:#32CD32
-    style INJECT_SPIRE fill:#D3D3D3,stroke:#808080,stroke-dasharray: 5 5
-    style WORKLOAD fill:#87CEEB
-    style CUSTOM fill:#D3D3D3,stroke:#808080,stroke-dasharray: 5 5
+    style INJECT fill:#32CD32
+    style SKIP fill:#D3D3D3
 ```
 
-## Key Differences
+## Sidecar Injection Rules
 
-| Aspect | AuthBridge (Recommended) | Legacy (Deprecated) |
-|--------|--------------------------|---------------------|
-| **Resources** | Standard K8s workloads | Custom Resources |
-| **Injection Control** | Pod labels | CR annotations |
-| **SPIRE** | Injected by default; opt out via `kagenti.io/spire: disabled` | Always enabled |
-| **Containers** | Init: proxy-init<br/>Sidecars: envoy-proxy, spiffe-helper, client-registration | Sidecars: spiffe-helper, client-registration |
-| **Traffic Management** | ✅ Envoy proxy with iptables | ❌ No proxy |
-| **Authentication** | Multiple methods (SPIRE, mTLS, JWT, etc.) | SPIRE only |
-| **Method** | `InjectAuthBridge()` | `MutatePodSpec()` |
+### Stage 1 pre-filters (all-or-nothing)
 
-spiffe-helper is injected by default; set `kagenti.io/spire: disabled` on the pod template to opt out.
-```
+| # | Check | Label / Config | Skip condition |
+| --- | --- | --- | --- |
+| 1 | Workload type | `kagenti.io/type` on workload | Not `agent` or `tool` |
+| 2 | Global kill switch | `featureGates.globalEnabled` in Helm values | `false` |
+| 3 | Tool gate | `featureGates.injectTools` in Helm values | Type is `tool` AND gate is `false` (default) |
+| 4 | Whole-workload opt-out | `kagenti.io/inject: disabled` on workload | Label explicitly set |
+
+### Stage 2 per-sidecar chain (independent per sidecar)
+
+| Layer | Config | Effect |
+| --- | --- | --- |
+| 1. Per-sidecar feature gate | `featureGates.envoyProxy / .spiffeHelper / .clientRegistration` | Disables sidecar cluster-wide |
+| 2. Workload opt-out label | `kagenti.io/envoy-proxy-inject: "false"` etc. on pod template | Disables sidecar for that workload |
+
+`proxy-init` is not independently evaluated — it always mirrors the `envoy-proxy` decision.

@@ -2,6 +2,10 @@
 
 This file provides context for Claude (AI assistant) when working with the `kagenti-extensions` monorepo.
 
+## AI Assistant Instructions
+
+- **No attribution** in commits, PR bodies, or issues — do not add "Co-Authored-By: Claude", "Generated with Claude Code", or any AI attribution.
+
 ## Repository Overview
 
 **kagenti-extensions** is a monorepo containing Kubernetes security extensions for the [Kagenti](https://github.com/kagenti/kagenti) ecosystem. It provides **zero-trust authentication** for Kubernetes workloads through automatic sidecar injection, transparent token exchange, and dynamic Keycloak client registration using SPIFFE/SPIRE identities.
@@ -44,9 +48,9 @@ A Kubernetes **mutating admission webhook** that intercepts workload creation (D
 
 **Key facts:**
 - Webhook: **AuthBridge** at `/mutate-workloads-authbridge`
-- Injection controlled via pod labels (`kagenti.io/type`, `kagenti.io/inject`, `kagenti.io/spire`) and namespace labels (`kagenti-enabled: "true"`)
+- Injection controlled via pod labels (`kagenti.io/type`, `kagenti.io/inject`) and per-sidecar opt-out labels (`kagenti.io/envoy-proxy-inject`, `kagenti.io/spiffe-helper-inject`, `kagenti.io/client-registration-inject`)
 - Shared `PodMutator` instance (in `internal/webhook/injector/`)
-- Injects: `proxy-init` (init), `envoy-proxy`, `spiffe-helper` (gated by `kagenti.io/spire` label), `kagenti-client-registration` (gated by `--enable-client-registration` flag)
+- Injects: `proxy-init` (init), `envoy-proxy`, `spiffe-helper`, `kagenti-client-registration` — all opt-out via workload labels or feature gates
 - Build: `cd kagenti-webhook && make build` / `make test` / `make docker-build`
 - Local dev: `cd kagenti-webhook && make local-dev CLUSTER=<kind-cluster>`
 

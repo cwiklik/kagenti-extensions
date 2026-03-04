@@ -21,20 +21,35 @@ The `PodMutator` instance is created in `cmd/main.go` and passed to the webhook 
 
 ### Injection Decision Flow
 
-**AuthBridge:**
-1. `kagenti.io/type` label must be `agent` or `tool` -- otherwise skip.
-2. `kagenti.io/inject: enabled` label forces injection ON.
-3. `kagenti.io/inject: disabled` (or any non-`enabled` value) forces injection OFF.
+**AuthBridge uses a two-stage decision process:**
+
+**Stage 1 — PodMutator pre-filters (any "no" skips ALL injection):**
+
+1. `kagenti.io/type` must be `agent` or `tool` — otherwise skip.
+2. `featureGates.globalEnabled` must be `true` — kill switch (cluster-wide).
+3. For tool workloads: `featureGates.injectTools` must be `true` — tools are not injected by default.
+4. `kagenti.io/inject: disabled` on the workload — whole-workload opt-out.
+
+**Stage 2 — PrecedenceEvaluator per-sidecar (independent for each sidecar):**
+
+Each sidecar independently passes through a two-layer chain:
+
+- L1: Per-sidecar feature gate (`featureGates.envoyProxy`, `.spiffeHelper`, `.clientRegistration`)
+- L2: Per-sidecar workload label (`kagenti.io/<sidecar>-inject: "false"` on pod template)
+
+`proxy-init` always mirrors the `envoy-proxy` decision and is never independently controlled.
 
 ### Injected Containers
 
-**Always injected:**
-- `proxy-init` (init container) -- iptables redirect setup.
+**Injected when envoy-proxy decision passes:**
+
+- `proxy-init` (init container) -- iptables redirect setup. Follows `envoy-proxy` decision exactly.
 - `envoy-proxy` (sidecar) -- Envoy service mesh proxy for traffic management.
 
-**Conditionally injected:**
-- `spiffe-helper` (sidecar) -- gated by `kagenti.io/spire: enabled` pod label. Obtains JWT-SVIDs from SPIRE agent.
-- `kagenti-client-registration` (sidecar) -- gated by `--enable-client-registration` flag (default `true`). Registers with Keycloak; uses SPIFFE identity when SPIRE is enabled, otherwise uses static `CLIENT_NAME`.
+**Injected by default, per-sidecar opt-out available:**
+
+- `spiffe-helper` (sidecar) -- obtains JWT-SVIDs from SPIRE agent. Opt out with `kagenti.io/spiffe-helper-inject: "false"` or `featureGates.spiffeHelper: false`.
+- `kagenti-client-registration` (sidecar) -- registers with Keycloak via SPIFFE identity. Opt out with `kagenti.io/client-registration-inject: "false"` or `featureGates.clientRegistration: false`.
 
 ## Directory Structure
 
@@ -42,7 +57,7 @@ The `PodMutator` instance is created in `cmd/main.go` and passed to the webhook 
 kagenti-webhook/
 ├── cmd/main.go                              # Entrypoint: flags, manager setup, webhook registration
 ├── internal/webhook/
-│   ├── config/                              # Platform configuration (not yet wired into injector)
+│   ├── config/                              # Platform configuration (wired into PodMutator)
 │   │   ├── types.go                         #   PlatformConfig struct (images, proxy, resources, etc.)
 │   │   ├── defaults.go                      #   CompiledDefaults() hardcoded fallback config
 │   │   ├── feature_gates.go                 #   FeatureGates struct (global sidecar enable/disable)
@@ -60,7 +75,8 @@ kagenti-webhook/
 │   ├── e2e/                                 # End-to-end tests (Kind cluster, Ginkgo)
 │   └── utils/                               # Test helpers (Run, LoadImageToKind, CertManager, etc.)
 ├── scripts/
-│   └── webhook-rollout.sh                   # Build + deploy to Kind cluster script
+│   ├── webhook-rollout.sh                   # Build + deploy to Kind cluster script
+│   └── test-precedence.sh                   # Automated end-to-end test runner for the precedence system
 ├── Makefile                                 # Build, test, deploy targets
 ├── Dockerfile                               # Multi-stage Go build -> distroless
 ├── go.mod / go.sum                          # Go 1.24, controller-runtime v0.22
@@ -144,7 +160,7 @@ make generate
 
 ### Architecture Patterns
 - **Shared PodMutator**: The `injector.PodMutator` instance is created in `main()` and passed to the webhook setup function. This ensures consistent mutation logic.
-- **Single mutation path**: `InjectAuthBridge()` handles all injection decisions; SPIRE is optional based on pod/namespace labels.
+- **Single mutation path**: `InjectAuthBridge()` handles all injection decisions. SPIRE integration is optional and controlled by per-sidecar workload labels and feature gates.
 - **Idempotency**: `AuthBridgeWebhook.isAlreadyInjected()` checks for existing sidecars before injection.
 - **Container existence checks**: `containerExists()` and `volumeExists()` helpers prevent duplicate injection.
 - **Kubebuilder markers**: Webhook path markers (e.g., `+kubebuilder:webhook:path=...`) in Go comments generate the webhook manifests. Do not change these without running `make manifests`.
@@ -201,7 +217,7 @@ Injected sidecars expect these ConfigMaps to exist in the target namespace:
 
 ## Gotchas and Known Issues
 
-1. **Config system not wired in**: `internal/webhook/config/` (PlatformConfig, FeatureGates, loaders) exists but is **not yet used** by the injector. Container builder still uses hardcoded constants. This is a known gap.
+1. **Config system is wired in**: `internal/webhook/config/` (PlatformConfig, FeatureGates, loaders) is used by `PodMutator` and `ContainerBuilder`. Feature gates support hot-reload via `FeatureGateLoader`. Platform config (images, ports, resources) is loaded at startup from the `kagenti-webhook-defaults` ConfigMap.
 
 2. **Kubebuilder markers**: The `+kubebuilder:webhook` comments generate webhook manifests. If you change the path, resources, or groups, you must run `make manifests` to regenerate.
 

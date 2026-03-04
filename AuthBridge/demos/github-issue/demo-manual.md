@@ -225,7 +225,7 @@ AUTHBRIDGE_DEMO=true AUTHBRIDGE_NAMESPACE=team1 \
 
 This automatically:
 1. Builds and deploys the kagenti-webhook
-2. Creates the `team1` namespace with the `kagenti-enabled=true` label
+2. Creates the `team1` namespace
 3. Applies any `configmaps-webhook.yaml` found in the specified k8s directory
 
 > **Note:** If you want to use a different namespace, set `AUTHBRIDGE_NAMESPACE=<your-namespace>` and update all subsequent commands accordingly.
