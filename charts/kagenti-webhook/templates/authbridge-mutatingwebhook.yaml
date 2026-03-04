@@ -19,11 +19,9 @@ webhooks:
   failurePolicy: Fail
   timeoutSeconds: 10
   sideEffects: None
-  # The webhook handler will decide based on workload + namespace labels
-  #
+  # Exclude system namespaces and the webhook's own namespace from mutation.
   namespaceSelector:
     matchExpressions:
-      # Exclude kube-system and other critical namespaces
       - key: kubernetes.io/metadata.name
         operator: NotIn
         values:
@@ -31,10 +29,16 @@ webhooks:
           - kube-public
           - kube-node-lease
           - {{ include "kagenti-webhook.namespace" . }}
-    matchLabels:
-      # Only trigger webhook for namespaces that have opted-in
-      # This aligns with the precedence evaluator Layer 3 which requires kagenti-enabled: true
-      kagenti-enabled: "true"
+  # Only intercept workloads explicitly labelled as agent or tool.
+  # Per-sidecar eligibility is then decided inside the handler via the
+  # two-stage precedence chain (feature gates + workload opt-out labels).
+  objectSelector:
+    matchExpressions:
+      - key: kagenti.io/type
+        operator: In
+        values:
+          - agent
+          - tool
   rules:
   - operations:
     - CREATE

@@ -15,18 +15,23 @@ webhooks:
   name: inject.kagenti.io
   namespaceSelector:
     matchExpressions:
-    # Exclude kube-system and other critical namespaces
+    # Exclude system namespaces.
     - key: kubernetes.io/metadata.name
       operator: NotIn
       values:
       - kube-system
       - kube-public
       - kube-node-lease
-    # trigger for namespaces not explicitly disabled
-    - key: kagenti-enabled
-      operator: NotIn
+  # Only intercept workloads explicitly labelled as agent or tool.
+  # Per-sidecar eligibility is decided inside the handler via the two-stage
+  # precedence chain (feature gates + workload opt-out labels).
+  objectSelector:
+    matchExpressions:
+    - key: kagenti.io/type
+      operator: In
       values:
-      - "false"
+      - agent
+      - tool
   timeoutSeconds: 10
   rules:
   - apiGroups:
