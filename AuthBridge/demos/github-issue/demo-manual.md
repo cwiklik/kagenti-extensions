@@ -72,7 +72,7 @@ providing end-to-end security:
 │  │   SPIRE (namespace:  │          │ KEYCLOAK (namespace: │                      │
 │  │       spire)         │          │     keycloak)        │                      │
 │  │                      │          │                      │                      │
-│  │  Provides SPIFFE     │          │  - demo realm        │                      │
+│  │  Provides SPIFFE     │          │  - kagenti realm     │                      │
 │  │  identities (SVIDs)  │          │  - token exchange    │                      │
 │  └──────────────────────┘          └──────────────────────┘                      │
 └──────────────────────────────────────────────────────────────────────────────────┘
@@ -272,7 +272,7 @@ This creates:
 
 | Resource | Name | Purpose |
 |----------|------|---------|
-| **Realm** | `demo` | Keycloak realm for the demo |
+| **Realm** | `kagenti` | Keycloak realm for the demo |
 | **Client** | `github-tool` | Target audience for token exchange |
 | **Scope** | `agent-team1-git-issue-agent-aud` | Realm DEFAULT — auto-adds Agent's SPIFFE ID to all tokens |
 | **Scope** | `github-tool-aud` | Realm OPTIONAL — for exchanged tokens targeting the tool |
@@ -282,36 +282,31 @@ This creates:
 
 ---
 
-## Step 3: Apply ConfigMaps
+## Step 3: Apply Demo ConfigMaps
 
-Apply the demo-specific ConfigMaps that configure AuthBridge for this demo. These
-ConfigMaps tell the sidecars how to connect to Keycloak and where to exchange tokens.
-
-> **Important: Apply ConfigMaps BEFORE deploying the agent.** The agent pod reads
-> ConfigMap values at startup. If the agent starts before the ConfigMaps are correct,
-> the client will be registered in the wrong realm. If this happens, delete the stale
-> Keycloak client, fix the ConfigMaps, and restart the agent deployment with
-> `kubectl rollout restart deployment/git-issue-agent -n team1`.
+The Kagenti installer creates default ConfigMaps (`environments`,
+`spiffe-helper-config`, `envoy-config`, `authbridge-config`) with the correct
+`kagenti` realm settings and 300s Envoy timeouts. This step overrides only
+`authbridge-config` with demo-specific values — the token exchange target
+audience (`github-tool`), scopes, and the agent's SPIFFE ID for inbound
+audience validation. Apply this **before** deploying the agent.
 
 ```bash
 cd AuthBridge
 
-# Apply the GitHub Issue demo ConfigMaps
+# Override authbridge-config for this demo (sets TARGET_AUDIENCE=github-tool)
 kubectl apply -f demos/github-issue/k8s/configmaps.yaml
 ```
 
-Verify the ConfigMap has the correct values:
+Verify the demo ConfigMap was applied:
 
 ```bash
-kubectl get configmap environments -n team1 -o jsonpath='{.data.KEYCLOAK_REALM}'
-# Expected: demo
+kubectl get configmap authbridge-config -n team1 -o jsonpath='{.data.TARGET_AUDIENCE}'
+# Expected: github-tool
 ```
 
 > **Note:** If you're using a different namespace or service account, edit
 > `configmaps.yaml` and update the `namespace` and `EXPECTED_AUDIENCE` fields.
-> If SPIRE is not available, set `SPIRE_ENABLED: "false"` in the `environments`
-> ConfigMap and update `EXPECTED_AUDIENCE` to match the static client ID format
-> (e.g., `team1/git-issue-agent` instead of `spiffe://...`).
 
 ---
 
@@ -512,7 +507,7 @@ A properly signed token from a **different Keycloak realm** has a valid signatur
 the issuer does not match the configured `ISSUER` in `authbridge-config`:
 
 ```bash
-# Get a valid token from the master realm (different issuer than "demo")
+# Get a valid token from the master realm (different issuer than "kagenti")
 WRONG_ISSUER_TOKEN=$(kubectl exec test-client -n team1 -- curl -s \
   "http://keycloak-service.keycloak.svc:8080/realms/master/protocol/openid-connect/token" \
   -d "grant_type=password" \
@@ -523,7 +518,7 @@ WRONG_ISSUER_TOKEN=$(kubectl exec test-client -n team1 -- curl -s \
 kubectl exec test-client -n team1 -- curl -s \
   -H "Authorization: Bearer $WRONG_ISSUER_TOKEN" \
   http://git-issue-agent:8080/
-# Expected: {"error":"unauthorized","message":"token validation failed: invalid issuer: expected http://keycloak.localtest.me:8080/realms/demo, got ..."}
+# Expected: {"error":"unauthorized","message":"token validation failed: invalid issuer: expected http://keycloak.localtest.me:8080/realms/kagenti, got ..."}
 ```
 
 > **Why this matters:** Even though the token is cryptographically valid (signed by
@@ -540,7 +535,7 @@ echo "Agent Client ID: $CLIENT_ID"
 
 # Get a service account token (simulating what the UI would obtain)
 TOKEN=$(kubectl exec test-client -n team1 -- curl -s -X POST \
-  "http://keycloak-service.keycloak.svc:8080/realms/demo/protocol/openid-connect/token" \
+  "http://keycloak-service.keycloak.svc:8080/realms/kagenti/protocol/openid-connect/token" \
   -d "grant_type=client_credentials" \
   -d "client_id=$CLIENT_ID" \
   -d "client_secret=$CLIENT_SECRET" | jq -r '.access_token')
@@ -581,8 +576,8 @@ Expected (one line per request in 8b–8e):
 ```
 [Inbound] Missing Authorization header
 [Inbound] JWT validation failed: failed to parse/validate token: ...
-[Inbound] JWT validation failed: invalid issuer: expected http://keycloak.localtest.me:8080/realms/demo, got ...
-[Inbound] Token validated - issuer: http://keycloak.localtest.me:8080/realms/demo, audience: [...]
+[Inbound] JWT validation failed: invalid issuer: expected http://keycloak.localtest.me:8080/realms/kagenti, got ...
+[Inbound] Token validated - issuer: http://keycloak.localtest.me:8080/realms/kagenti, audience: [...]
 [Inbound] JWT validation succeeded, forwarding request
 ```
 
@@ -616,8 +611,8 @@ kubectl exec -it test-client -n team1 -- sh
 Inside the test-client pod, run:
 
 ```bash
-# Get a Keycloak admin token
-ADMIN_TOKEN=$(curl -s http://keycloak-service.keycloak.svc:8080/realms/master/protocol/openid-connect/token \
+# Get a Keycloak admin token from the kagenti realm
+ADMIN_TOKEN=$(curl -s http://keycloak-service.keycloak.svc:8080/realms/kagenti/protocol/openid-connect/token \
   -d "grant_type=password" \
   -d "client_id=admin-cli" \
   -d "username=admin" \
@@ -627,11 +622,11 @@ echo "Admin token length: ${#ADMIN_TOKEN}"
 # Expected: Admin token length: 782
 # If 0 or 4 (null), Keycloak is not reachable or credentials are wrong — stop here.
 
-# Look up the agent's client in the demo realm.
+# Look up the agent's client in the kagenti realm.
 # The client ID is the SPIFFE ID (URL-encoded in the query parameter).
 SPIFFE_ID="spiffe://localtest.me/ns/team1/sa/git-issue-agent"
 CLIENTS=$(curl -s -H "Authorization: Bearer $ADMIN_TOKEN" \
-  "http://keycloak-service.keycloak.svc:8080/admin/realms/demo/clients" \
+  "http://keycloak-service.keycloak.svc:8080/admin/realms/kagenti/clients" \
   --data-urlencode "clientId=$SPIFFE_ID" --get)
 INTERNAL_ID=$(echo "$CLIENTS" | jq -r ".[0].id")
 CLIENT_ID=$(echo "$CLIENTS" | jq -r ".[0].clientId")
@@ -648,7 +643,7 @@ echo "Secret length: ${#CLIENT_SECRET}"
 
 # Get an OAuth token for the agent
 TOKEN=$(curl -s -X POST \
-  "http://keycloak-service.keycloak.svc:8080/realms/demo/protocol/openid-connect/token" \
+  "http://keycloak-service.keycloak.svc:8080/realms/kagenti/protocol/openid-connect/token" \
   -d "grant_type=client_credentials" \
   --data-urlencode "client_id=$CLIENT_ID" \
   --data-urlencode "client_secret=$CLIENT_SECRET" | jq -r ".access_token")
@@ -669,7 +664,7 @@ Token length:  1165
 > **Troubleshooting:** If `INTERNAL_ID` shows `null`, the Keycloak query didn't find
 > the client. Verify `$ADMIN_TOKEN` is not empty (Keycloak reachable?) and that
 > `setup_keycloak.py` was run. You can also list all clients with:
-> `curl -s -H "Authorization: Bearer $ADMIN_TOKEN" "http://keycloak-service.keycloak.svc:8080/admin/realms/demo/clients" | jq '.[].clientId'`
+> `curl -s -H "Authorization: Bearer $ADMIN_TOKEN" "http://keycloak-service.keycloak.svc:8080/admin/realms/kagenti/clients" | jq '.[].clientId'`
 
 ### 9c. Send a prompt to the agent
 
@@ -755,7 +750,7 @@ kubectl logs deployment/git-issue-agent -n team1 -c envoy-proxy 2>&1 | grep -i "
 Expected output:
 
 ```
-[Inbound] Token validated - issuer: http://keycloak.localtest.me:8080/realms/demo, audience: [spiffe://localtest.me/ns/team1/sa/git-issue-agent ...]
+[Inbound] Token validated - issuer: http://keycloak.localtest.me:8080/realms/kagenti, audience: [spiffe://localtest.me/ns/team1/sa/git-issue-agent ...]
 [Inbound] JWT validation succeeded, forwarding request
 ```
 
@@ -764,7 +759,7 @@ If you ran the rejection tests (8b, 8c, 8d), you should also see:
 ```
 [Inbound] Missing Authorization header
 [Inbound] JWT validation failed: failed to parse/validate token: ...
-[Inbound] JWT validation failed: invalid issuer: expected http://keycloak.localtest.me:8080/realms/demo, got ...
+[Inbound] JWT validation failed: invalid issuer: expected http://keycloak.localtest.me:8080/realms/kagenti, got ...
 ```
 
 **Outbound token exchange logs** (RFC 8693 token exchange for the GitHub tool):
@@ -776,7 +771,7 @@ kubectl logs deployment/git-issue-agent -n team1 -c envoy-proxy 2>&1 | grep "^20
 Expected:
 
 ```
-[Token Exchange] Token URL: http://keycloak-service.keycloak.svc:8080/realms/demo/protocol/openid-connect/token
+[Token Exchange] Token URL: http://keycloak-service.keycloak.svc:8080/realms/kagenti/protocol/openid-connect/token
 [Token Exchange] Client ID: spiffe://localtest.me/ns/team1/sa/git-issue-agent
 [Token Exchange] Audience: github-tool
 [Token Exchange] Scopes: openid github-tool-aud github-full-access
@@ -811,34 +806,18 @@ kubectl delete pod test-client -n team1 --ignore-not-found
 
 **Symptom:** `{"error":"invalid_client","error_description":"Invalid client or Invalid client credentials"}`
 
-**Cause:** The client was registered in the wrong Keycloak realm (typically `master` instead
-of `demo`). This happens when the `environments` ConfigMap is updated **after** the agent
-pod has already started — the pod reads ConfigMap values at startup time.
+**Cause:** The agent pod's `environments` ConfigMap was missing or incorrect at startup,
+so the client-registration sidecar registered the client with wrong settings.
 
 **Fix:**
 
 ```bash
-# 1. Check which realm the client was registered in
-kubectl exec deployment/git-issue-agent -n team1 -c kagenti-client-registration -- \
-  sh -c 'echo "KEYCLOAK_REALM=$KEYCLOAK_REALM"'
-
-# 2. If it shows "master" instead of "demo", delete the stale client
-kubectl exec test-client -n team1 -- sh -c '
-ADMIN_TOKEN=$(curl -s http://keycloak-service.keycloak.svc:8080/realms/master/protocol/openid-connect/token \
-  -d "grant_type=password" -d "client_id=admin-cli" -d "username=admin" -d "password=admin" | jq -r ".access_token")
-# With SPIRE enabled (default), use the SPIFFE ID as client ID.
-# With SPIRE disabled, use: CLIENT_ID="team1/git-issue-agent"
-CLIENT_ID="spiffe://localtest.me/ns/team1/sa/git-issue-agent"
-INTERNAL_ID=$(curl -s -H "Authorization: Bearer $ADMIN_TOKEN" \
-  --data-urlencode "clientId=$CLIENT_ID" \
-  --get "http://keycloak-service.keycloak.svc:8080/admin/realms/master/clients" | jq -r ".[0].id")
-curl -s -X DELETE -H "Authorization: Bearer $ADMIN_TOKEN" \
-  "http://keycloak-service.keycloak.svc:8080/admin/realms/master/clients/$INTERNAL_ID"
-echo "Deleted stale client from master realm"'
-
-# 3. Verify ConfigMap is correct, then restart
+# 1. Verify the installer's environments ConfigMap has the correct realm
 kubectl get configmap environments -n team1 -o jsonpath='{.data.KEYCLOAK_REALM}'
-# Should show: demo
+# Should show: kagenti
+
+# 2. Re-apply the demo ConfigMap and restart
+kubectl apply -f demos/github-issue/k8s/configmaps.yaml
 kubectl rollout restart deployment/git-issue-agent -n team1
 ```
 
@@ -880,7 +859,7 @@ kubectl logs deployment/git-issue-agent -n team1 -c agent
 **Symptom:** Tool rejects the exchanged token
 
 **Fix:** Verify the tool's environment variables match the Keycloak configuration:
-- `ISSUER` should be `http://keycloak.localtest.me:8080/realms/demo`
+- `ISSUER` should be `http://keycloak.localtest.me:8080/realms/kagenti`
 - `AUDIENCE` should be `github-tool`
 
 ### Upstream Request Timeout
@@ -889,9 +868,16 @@ kubectl logs deployment/git-issue-agent -n team1 -c agent
 
 **Cause:** The LLM inference takes longer than the Envoy route timeout.
 
-**Fix:** The `envoy-config` ConfigMap sets the route timeout to 300 seconds. If you
-still hit timeouts, increase the `timeout` values in both the outbound and inbound
-route configs and the `ext_proc` filter, then restart the agent:
+**Fix:** The installer's `envoy-config` ConfigMap sets route and ext_proc
+timeouts to 300 seconds (5 min). If you still hit timeouts, verify the
+ConfigMap has the correct values:
+
+```bash
+kubectl get configmap envoy-config -n team1 -o jsonpath='{.data.envoy\.yaml}' | grep "timeout:"
+```
+
+If you see `30s` values instead of `300s`, reinstall Kagenti (the installer
+creates the correct defaults) and restart the agent:
 
 ```bash
 kubectl rollout restart deployment/git-issue-agent -n team1
@@ -937,7 +923,7 @@ kubectl delete mutatingwebhookconfiguration kagenti-webhook-authbridge-mutating-
 | `demos/github-issue/demo-manual.md` | This guide |
 | `demos/github-issue/demo-ui.md` | UI-driven deployment guide |
 | `demos/github-issue/setup_keycloak.py` | Keycloak configuration script |
-| `demos/github-issue/k8s/configmaps.yaml` | ConfigMaps for AuthBridge sidecars |
+| `demos/github-issue/k8s/configmaps.yaml` | Demo-specific authbridge-config override |
 | `demos/github-issue/k8s/git-issue-agent-deployment.yaml` | Agent deployment with AuthBridge labels |
 | `demos/github-issue/k8s/github-tool-deployment.yaml` | GitHub tool deployment (no injection) |
 

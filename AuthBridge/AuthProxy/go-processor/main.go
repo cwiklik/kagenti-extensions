@@ -269,6 +269,21 @@ func denyRequest(message string) *v3.ProcessingResponse {
 	}
 }
 
+// denyOutboundRequest returns a 503 Service Unavailable when outbound token
+// acquisition fails, preventing unauthenticated requests from reaching downstream.
+func denyOutboundRequest(message string) *v3.ProcessingResponse {
+	return &v3.ProcessingResponse{
+		Response: &v3.ProcessingResponse_ImmediateResponse{
+			ImmediateResponse: &v3.ImmediateResponse{
+				Status: &typev3.HttpStatus{
+					Code: typev3.StatusCode_ServiceUnavailable,
+				},
+				Body: []byte(fmt.Sprintf(`{"error":"token_acquisition_failed","message":"%s"}`, message)),
+			},
+		},
+	}
+}
+
 // getHostFromHeaders extracts host from :authority (HTTP/2) or Host header
 func getHostFromHeaders(headers []*core.HeaderValue) string {
 	if host := getHeaderValue(headers, ":authority"); host != "" {
@@ -324,6 +339,52 @@ func exchangeToken(clientID, clientSecret, tokenURL, subjectToken, audience, sco
 	}
 
 	log.Printf("[Token Exchange] Successfully exchanged token")
+	return tokenResp.AccessToken, nil
+}
+
+// clientCredentialsGrant performs an OAuth 2.0 Client Credentials grant.
+// Used as a fallback when no Authorization header is present on outbound requests.
+// The agent's identity (client-id/client-secret from client-registration) is used
+// to obtain a token scoped to the target audience.
+func clientCredentialsGrant(clientID, clientSecret, tokenURL, audience, scopes string) (string, error) {
+	log.Printf("[Client Credentials] Starting client credentials grant")
+	log.Printf("[Client Credentials] Token URL: %s", tokenURL)
+	log.Printf("[Client Credentials] Client ID: %s", clientID)
+	log.Printf("[Client Credentials] Audience: %s", audience)
+	log.Printf("[Client Credentials] Scopes: %s", scopes)
+
+	data := url.Values{}
+	data.Set("client_id", clientID)
+	data.Set("client_secret", clientSecret)
+	data.Set("grant_type", "client_credentials")
+	data.Set("audience", audience)
+	data.Set("scope", scopes)
+
+	resp, err := http.PostForm(tokenURL, data)
+	if err != nil {
+		log.Printf("[Client Credentials] Failed to make request: %v", err)
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Printf("[Client Credentials] Failed to read response: %v", err)
+		return "", err
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("[Client Credentials] Failed with status %d: %s", resp.StatusCode, string(body))
+		return "", status.Errorf(codes.Internal, "client credentials grant failed: %s", string(body))
+	}
+
+	var tokenResp tokenExchangeResponse
+	if err := json.Unmarshal(body, &tokenResp); err != nil {
+		log.Printf("[Client Credentials] Failed to parse response: %v", err)
+		return "", err
+	}
+
+	log.Printf("[Client Credentials] Successfully obtained token")
 	return tokenResp.AccessToken, nil
 }
 
@@ -491,11 +552,40 @@ func (p *processor) handleOutbound(ctx context.Context, headers *core.HeaderMap)
 					}
 				}
 				log.Printf("[Token Exchange] Failed to exchange token: %v", err)
+				return denyOutboundRequest("token exchange failed")
 			} else {
 				log.Printf("[Token Exchange] Invalid Authorization header format")
+				return denyOutboundRequest("invalid Authorization header format")
 			}
 		} else {
-			log.Printf("[Token Exchange] No Authorization header found")
+			// No Authorization header on outbound — fall back to client_credentials.
+			// This handles agent frameworks that don't propagate the inbound token.
+			// The token uses the agent's identity rather than the end user's.
+			log.Printf("[Client Credentials] No Authorization header on outbound, falling back to client_credentials grant")
+			newToken, err := clientCredentialsGrant(clientID, clientSecret, tokenURL, targetAudience, targetScopes)
+			if err == nil {
+				log.Printf("[Client Credentials] Injecting token into outbound request")
+				return &v3.ProcessingResponse{
+					Response: &v3.ProcessingResponse_RequestHeaders{
+						RequestHeaders: &v3.HeadersResponse{
+							Response: &v3.CommonResponse{
+								HeaderMutation: &v3.HeaderMutation{
+									SetHeaders: []*core.HeaderValueOption{
+										{
+											Header: &core.HeaderValue{
+												Key:      "authorization",
+												RawValue: []byte("Bearer " + newToken),
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				}
+			}
+			log.Printf("[Client Credentials] Failed to obtain token: %v", err)
+			return denyOutboundRequest("client credentials token acquisition failed")
 		}
 	} else {
 		log.Println("[Token Exchange] Missing configuration, skipping token exchange")

@@ -73,7 +73,7 @@ providing end-to-end security:
 │  │   SPIRE (namespace:  │          │ KEYCLOAK (namespace: │                      │
 │  │       spire)         │          │     keycloak)        │                      │
 │  │                      │          │                      │                      │
-│  │  Provides SPIFFE     │          │  - demo realm        │                      │
+│  │  Provides SPIFFE     │          │  - kagenti realm     │                      │
 │  │  identities (SVIDs)  │          │  - token exchange    │                      │
 │  └──────────────────────┘          └──────────────────────┘                      │
 └──────────────────────────────────────────────────────────────────────────────────┘
@@ -163,7 +163,7 @@ This creates:
 
 | Resource | Name | Purpose |
 |----------|------|---------|
-| **Realm** | `demo` | Keycloak realm for the demo |
+| **Realm** | `kagenti` | Keycloak realm for the demo |
 | **Client** | `github-tool` | Target audience for token exchange |
 | **Scope** | `agent-team1-git-issue-agent-aud` | Realm DEFAULT — auto-adds Agent's SPIFFE ID to all tokens |
 | **Scope** | `github-tool-aud` | Realm OPTIONAL — for exchanged tokens targeting the tool |
@@ -173,24 +173,20 @@ This creates:
 
 ---
 
-## Step 2: Apply ConfigMaps
+## Step 2: Apply Demo ConfigMaps
 
-> **Critical: Apply ConfigMaps BEFORE importing the agent in the UI.** The agent pod
-> reads ConfigMap values at startup. If the agent starts before the ConfigMaps are
-> correct, the client will be registered in the wrong Keycloak realm.
+The Kagenti installer creates default ConfigMaps (`environments`,
+`spiffe-helper-config`, `envoy-config`, `authbridge-config`) with the correct
+`kagenti` realm settings and 300s Envoy timeouts. This step overrides only
+`authbridge-config` with demo-specific values — the token exchange target
+audience (`github-tool`), scopes, and the agent's SPIFFE ID for inbound
+audience validation.
 
 ```bash
 cd AuthBridge
 
-# Apply the GitHub Issue demo ConfigMaps
+# Override authbridge-config for this demo (sets TARGET_AUDIENCE=github-tool)
 kubectl apply -f demos/github-issue/k8s/configmaps.yaml
-```
-
-Verify:
-
-```bash
-kubectl get configmap environments -n team1 -o jsonpath='{.data.KEYCLOAK_REALM}'
-# Expected: demo
 ```
 
 ---
@@ -453,33 +449,31 @@ model is pulled (`ollama pull ibm/granite4:latest`).
 
 ## Step 8: Chat via Kagenti UI
 
-<!-- WORKAROUND: Remove this limitation note once kagenti-extensions#147 is fixed. -->
-
-> **Known limitation ([kagenti-extensions#147](https://github.com/kagenti/kagenti-extensions/issues/147)):**
-> The Kagenti UI authenticates via Keycloak's `master` realm,
-> but AuthBridge validates inbound JWTs against the `demo` realm JWKS. Since the
-> go-processor currently supports only a single JWKS URL, UI chat requests receive
-> a `401` ("key not found in key set"). The **Agent Card** page works because
-> `/.well-known/*` paths bypass JWT validation
-> ([PR #133](https://github.com/kagenti/kagenti-extensions/pull/133)).
->
-> **Use [Step 9: Test via CLI](#step-9-test-via-cli-optional)** to test the full
-> AuthBridge flow end-to-end with a valid `demo`-realm token.
+With the platform-wide migration to the `kagenti` realm
+([kagenti#764](https://github.com/kagenti/kagenti/pull/764)), both the Kagenti UI
+and AuthBridge demos now use the same Keycloak realm. This resolves the previous
+realm mismatch issue
+([kagenti-extensions#147](https://github.com/kagenti/kagenti-extensions/issues/147)).
 
 1. Navigate to the **Agent Catalog** in the Kagenti UI.
 2. Select the `team1` namespace.
 3. Under **Available Agents**, select `git-issue-agent` and click **View Details**.
 4. Verify the **Agent Card** is visible (this confirms the agent is running and
    the `/.well-known/*` bypass is working).
-5. Chat via the UI will not work until the realm mismatch is resolved (see note above).
-   Use the CLI test in Step 9 instead.
+5. Use the **Chat** panel to send a message, e.g. "List issues in kagenti/kagenti repo".
+6. The agent should respond with a list of GitHub issues.
+
+> **Troubleshooting:** If UI chat returns a `401`, verify that both the UI and
+> AuthBridge are configured against the same `kagenti` realm. You can also use
+> [Step 9: Test via CLI](#step-9-test-via-cli) to test the full AuthBridge flow
+> independently.
 
 ---
 
 ## Step 9: Test via CLI
 
 Test the AuthBridge flow from the command line to verify inbound validation and
-token exchange using a `demo`-realm token.
+token exchange using a `kagenti`-realm token.
 
 > **Note:** The CLI test commands below use the same service name and port
 > (`git-issue-agent:8080`) as both the UI and manual deployments.
@@ -536,8 +530,8 @@ kubectl exec -it test-client -n team1 -- sh
 Inside the pod, get credentials and send a request:
 
 ```bash
-# Get a Keycloak admin token
-ADMIN_TOKEN=$(curl -s http://keycloak-service.keycloak.svc:8080/realms/master/protocol/openid-connect/token \
+# Get a Keycloak admin token from the kagenti realm
+ADMIN_TOKEN=$(curl -s http://keycloak-service.keycloak.svc:8080/realms/kagenti/protocol/openid-connect/token \
   -d "grant_type=password" \
   -d "client_id=admin-cli" \
   -d "username=admin" \
@@ -545,11 +539,11 @@ ADMIN_TOKEN=$(curl -s http://keycloak-service.keycloak.svc:8080/realms/master/pr
 
 echo "Admin token length: ${#ADMIN_TOKEN}"
 
-# Look up the agent's client in the demo realm.
+# Look up the agent's client in the kagenti realm.
 # The client ID is the SPIFFE ID (URL-encoded in the query parameter).
 SPIFFE_ID="spiffe://localtest.me/ns/team1/sa/git-issue-agent"
 CLIENTS=$(curl -s -H "Authorization: Bearer $ADMIN_TOKEN" \
-  "http://keycloak-service.keycloak.svc:8080/admin/realms/demo/clients" \
+  "http://keycloak-service.keycloak.svc:8080/admin/realms/kagenti/clients" \
   --data-urlencode "clientId=$SPIFFE_ID" --get)
 INTERNAL_ID=$(echo "$CLIENTS" | jq -r ".[0].id")
 CLIENT_ID=$(echo "$CLIENTS" | jq -r ".[0].clientId")
@@ -565,7 +559,7 @@ echo "Secret length: ${#CLIENT_SECRET}"
 
 # Get an OAuth token for the agent
 TOKEN=$(curl -s -X POST \
-  "http://keycloak-service.keycloak.svc:8080/realms/demo/protocol/openid-connect/token" \
+  "http://keycloak-service.keycloak.svc:8080/realms/kagenti/protocol/openid-connect/token" \
   -d "grant_type=client_credentials" \
   --data-urlencode "client_id=$CLIENT_ID" \
   --data-urlencode "client_secret=$CLIENT_SECRET" | jq -r ".access_token")
@@ -611,7 +605,7 @@ kubectl logs deployment/git-issue-agent -n team1 -c envoy-proxy 2>&1 | grep "\[I
 Expected:
 
 ```
-[Inbound] Token validated - issuer: http://keycloak.localtest.me:8080/realms/demo, audience: [spiffe://localtest.me/ns/team1/sa/git-issue-agent ...]
+[Inbound] Token validated - issuer: http://keycloak.localtest.me:8080/realms/kagenti, audience: [spiffe://localtest.me/ns/team1/sa/git-issue-agent ...]
 [Inbound] JWT validation succeeded, forwarding request
 ```
 
@@ -624,7 +618,7 @@ kubectl logs deployment/git-issue-agent -n team1 -c envoy-proxy 2>&1 | grep "^20
 Expected:
 
 ```
-[Token Exchange] Token URL: http://keycloak-service.keycloak.svc:8080/realms/demo/protocol/openid-connect/token
+[Token Exchange] Token URL: http://keycloak-service.keycloak.svc:8080/realms/kagenti/protocol/openid-connect/token
 [Token Exchange] Client ID: spiffe://localtest.me/ns/team1/sa/git-issue-agent
 [Token Exchange] Audience: github-tool
 [Token Exchange] Scopes: openid github-tool-aud github-full-access
@@ -649,7 +643,7 @@ If the agent is missing environment variables after UI deployment (e.g., `MCP_UR
 # Set missing env vars on the agent container
 kubectl set env deployment/git-issue-agent -n team1 -c agent \
   MCP_URL="http://github-tool-mcp:9090/mcp" \
-  JWKS_URI="http://keycloak-service.keycloak.svc:8080/realms/demo/protocol/openid-connect/certs"
+  JWKS_URI="http://keycloak-service.keycloak.svc:8080/realms/kagenti/protocol/openid-connect/certs"
 
 # If using OpenAI and the key is in a secret:
 kubectl patch deployment git-issue-agent -n team1 --type=json -p='[
@@ -688,19 +682,17 @@ kubectl rollout status deployment/git-issue-agent -n team1 --timeout=180s
 
 **Symptom:** `{"error":"invalid_client","error_description":"Invalid client or Invalid client credentials"}`
 
-**Cause:** The client was registered in the wrong Keycloak realm (typically `master`
-instead of `demo`). This happens when the `environments` ConfigMap is updated **after**
-the agent pod has already started. This is especially common with UI deployments where
-the Kagenti Helm chart may have pre-existing ConfigMaps.
+**Cause:** The agent pod's `environments` ConfigMap was missing or incorrect at startup,
+so the client-registration sidecar registered the client with wrong settings.
 
 **Fix:**
 
 ```bash
-# 1. Verify ConfigMap is correct
+# 1. Verify the installer's environments ConfigMap has the correct realm
 kubectl get configmap environments -n team1 -o jsonpath='{.data.KEYCLOAK_REALM}'
-# Should show: demo
+# Should show: kagenti
 
-# 2. If wrong, re-apply ConfigMaps and restart
+# 2. Re-apply the demo ConfigMap and restart
 kubectl apply -f demos/github-issue/k8s/configmaps.yaml
 kubectl rollout restart deployment/git-issue-agent -n team1
 ```
@@ -731,17 +723,18 @@ Both the UI and manual deployments create `git-issue-agent:8080` (targetPort 800
 
 **Cause:** The LLM inference takes longer than the Envoy route timeout.
 
-**Fix:** The `envoy-config` ConfigMap sets the route timeout to 300 seconds (5 min).
-If you still hit timeouts, check that the ConfigMap was applied correctly:
+**Fix:** The installer's `envoy-config` ConfigMap sets route and ext_proc
+timeouts to 300 seconds (5 min). If you still hit timeouts, verify the
+ConfigMap has the correct values:
 
 ```bash
 kubectl get configmap envoy-config -n team1 -o jsonpath='{.data.envoy\.yaml}' | grep "timeout:"
 ```
 
-If you see `30s` values instead of `300s`, re-apply the ConfigMaps and restart:
+If you see `30s` values instead of `300s`, reinstall Kagenti (the installer
+creates the correct defaults) and restart the agent:
 
 ```bash
-kubectl apply -f demos/github-issue/k8s/configmaps.yaml
 kubectl rollout restart deployment/git-issue-agent -n team1
 ```
 
@@ -786,7 +779,7 @@ direct curl to the tool gets `Connection reset by peer`.
 **Symptom:** Tool rejects the exchanged token
 
 **Fix:** Verify the tool's environment variables match the Keycloak configuration:
-- `ISSUER` should be `http://keycloak.localtest.me:8080/realms/demo`
+- `ISSUER` should be `http://keycloak.localtest.me:8080/realms/kagenti`
 - `AUDIENCE` should be `github-tool`
 
 ---
@@ -836,7 +829,7 @@ kubectl delete mutatingwebhookconfiguration kagenti-webhook-authbridge-mutating-
 | `demos/github-issue/demo-ui.md` | This guide |
 | `demos/github-issue/demo-manual.md` | Fully manual deployment guide |
 | `demos/github-issue/setup_keycloak.py` | Keycloak configuration script |
-| `demos/github-issue/k8s/configmaps.yaml` | ConfigMaps for AuthBridge sidecars |
+| `demos/github-issue/k8s/configmaps.yaml` | Demo-specific authbridge-config override |
 | `demos/github-issue/k8s/git-issue-agent-deployment.yaml` | Agent deployment YAML (manual only) |
 | `demos/github-issue/k8s/github-tool-deployment.yaml` | GitHub tool deployment YAML (manual only) |
 
