@@ -117,14 +117,25 @@ func (w *AuthBridgeWebhook) Handle(ctx context.Context, req admission.Request) a
 	return admission.PatchResponseFromRaw(req.Object.Raw, marshaledMutated)
 }
 
-// deriveWorkloadName extracts a stable workload name from the Pod.
-// For controller-managed Pods, GenerateName is set (e.g. "myapp-7d4f8b9c5-")
-// and we trim the trailing hyphen. For bare Pods, we use the Pod name directly.
+// deriveWorkloadName extracts a workload name from the Pod for ServiceAccount
+// and client-registration naming. For controller-managed Pods, GenerateName
+// is set (e.g. "myapp-7d4f8b9c5-") and we trim the trailing hyphen — this
+// yields the ReplicaSet name (e.g. "myapp-7d4f8b9c5"), not the Deployment
+// name. Resolving the Deployment name requires a ReplicaSet owner-ref lookup,
+// which is planned for Phase 2 (AgentRuntime CR integration, issue #177).
+// For bare Pods, we use the Pod name directly.
 func deriveWorkloadName(pod *corev1.Pod) string {
 	if pod.GenerateName != "" {
 		return strings.TrimRight(pod.GenerateName, "-")
 	}
-	return pod.Name
+	if pod.Name != "" {
+		return pod.Name
+	}
+	// Both GenerateName and Name empty — should not happen for valid
+	// admission requests, but fall back to UID to avoid empty names.
+	authbridgelog.Info("Warning: Pod has neither Name nor GenerateName, falling back to UID",
+		"uid", pod.UID)
+	return string(pod.UID)
 }
 
 func (w *AuthBridgeWebhook) isAlreadyInjected(podSpec *corev1.PodSpec) bool {

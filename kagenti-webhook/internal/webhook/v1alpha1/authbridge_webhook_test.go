@@ -1,5 +1,5 @@
 /*
-Copyright 2025.
+Copyright 2025-2026.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -20,8 +20,8 @@ import (
 	"fmt"
 
 	"github.com/kagenti/kagenti-extensions/kagenti-webhook/internal/webhook/injector"
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
+	. "github.com/onsi/ginkgo/v2" //nolint:revive // dot import is standard Ginkgo usage
+	. "github.com/onsi/gomega"    //nolint:revive // dot import is standard Gomega usage
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -151,6 +151,30 @@ var _ = Describe("AuthBridge Pod Webhook", func() {
 			Expect(count).To(Equal(1))
 		})
 	})
+})
+
+var _ = Describe("deriveWorkloadName", func() {
+	DescribeTable("should extract the correct workload name",
+		func(generateName, name, expected string) {
+			pod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					GenerateName: generateName,
+					Name:         name,
+				},
+			}
+			Expect(deriveWorkloadName(pod)).To(Equal(expected))
+		},
+		Entry("Deployment Pod (GenerateName with ReplicaSet hash)",
+			"myapp-7d4f8b9c5-", "", "myapp-7d4f8b9c5"),
+		Entry("StatefulSet Pod (GenerateName without hash)",
+			"myapp-", "", "myapp"),
+		Entry("Bare Pod with Name only",
+			"", "my-bare-pod", "my-bare-pod"),
+		Entry("Pod with both GenerateName and Name (GenerateName wins)",
+			"myapp-abc12-", "myapp-abc12-xyz", "myapp-abc12"),
+		Entry("GenerateName with no trailing hyphen",
+			"myapp", "", "myapp"),
+	)
 })
 
 func containerNames(containers []corev1.Container) []string {
