@@ -17,6 +17,11 @@ data:
   SPIRE_ENABLED: "true"
   KEYCLOAK_URL: "http://keycloak-service.keycloak.svc:8080"
   KEYCLOAK_REALM: "demo"
+  # Comma-separated list of Keycloak client IDs that should receive the agent's
+  # audience scope. This allows existing clients (like the UI) to include the
+  # agent's audience in their tokens without manual Keycloak configuration.
+  # Default: "kagenti" (the platform UI client)
+  # PLATFORM_CLIENT_IDS: "kagenti"
 
 ---
 # keycloak-admin-secret - Keycloak admin credentials for client registration
@@ -30,11 +35,6 @@ type: Opaque
 stringData:
   KEYCLOAK_ADMIN_USERNAME: "admin"
   KEYCLOAK_ADMIN_PASSWORD: "admin"
-  # Comma-separated list of Keycloak client IDs that should receive the agent's
-  # audience scope. This allows existing clients (like the UI) to include the
-  # agent's audience in their tokens without manual Keycloak configuration.
-  # Default: "kagenti" (the platform UI client)
-  # PLATFORM_CLIENT_IDS: "kagenti"
 
 ---
 # authbridge-config ConfigMap - Used by envoy-proxy for token exchange and inbound validation

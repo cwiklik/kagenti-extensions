@@ -141,10 +141,12 @@ func TestBuildClientRegistrationContainer_AdminCredentialsFromSecret(t *testing.
 
 	sensitiveKeys := []string{"KEYCLOAK_ADMIN_USERNAME", "KEYCLOAK_ADMIN_PASSWORD"}
 	for _, key := range sensitiveKeys {
+		found := false
 		for _, env := range container.Env {
 			if env.Name != key {
 				continue
 			}
+			found = true
 			if env.ValueFrom == nil || env.ValueFrom.SecretKeyRef == nil {
 				t.Errorf("env %q must use SecretKeyRef, got ConfigMapKeyRef or literal", key)
 				continue
@@ -152,6 +154,9 @@ func TestBuildClientRegistrationContainer_AdminCredentialsFromSecret(t *testing.
 			if env.ValueFrom.SecretKeyRef.Name != "keycloak-admin-secret" {
 				t.Errorf("env %q SecretKeyRef.Name = %q, want %q", key, env.ValueFrom.SecretKeyRef.Name, "keycloak-admin-secret")
 			}
+		}
+		if !found {
+			t.Errorf("client-registration container missing env var %q", key)
 		}
 	}
 }
@@ -162,10 +167,12 @@ func TestBuildClientRegistrationContainer_NonSensitiveKeysFromConfigMap(t *testi
 
 	nonSensitiveKeys := []string{"KEYCLOAK_URL", "KEYCLOAK_REALM"}
 	for _, key := range nonSensitiveKeys {
+		found := false
 		for _, env := range container.Env {
 			if env.Name != key {
 				continue
 			}
+			found = true
 			if env.ValueFrom == nil || env.ValueFrom.ConfigMapKeyRef == nil {
 				t.Errorf("env %q must use ConfigMapKeyRef", key)
 				continue
@@ -173,6 +180,9 @@ func TestBuildClientRegistrationContainer_NonSensitiveKeysFromConfigMap(t *testi
 			if env.ValueFrom.ConfigMapKeyRef.Name != "environments" {
 				t.Errorf("env %q ConfigMapKeyRef.Name = %q, want %q", key, env.ValueFrom.ConfigMapKeyRef.Name, "environments")
 			}
+		}
+		if !found {
+			t.Errorf("client-registration container missing env var %q", key)
 		}
 	}
 }
