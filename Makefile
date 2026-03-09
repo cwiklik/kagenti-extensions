@@ -14,6 +14,7 @@ lint: ## Run all linters (pre-commit hooks)
 fmt: ## Run formatters across all sub-projects
 	cd kagenti-webhook && go fmt ./...
 	cd AuthBridge/AuthProxy && go fmt ./...
+	ruff format AuthBridge/
 
 pre-commit: ## Install pre-commit hooks (including commit-msg)
 	pre-commit install --hook-type pre-commit --hook-type commit-msg
