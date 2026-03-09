@@ -62,14 +62,6 @@ func (b *ContainerBuilder) BuildSpiffeHelperContainer() corev1.Container {
 			"-config=/etc/spiffe-helper/helper.conf",
 			"run",
 		},
-		// Run as the same UID/GID as client-registration so that SVID files
-		// written to the shared svid-output volume (/opt) are readable by
-		// the client-registration container. spiffe-helper writes files with
-		// restrictive permissions (0600), so matching the UID is required.
-		SecurityContext: &corev1.SecurityContext{
-			RunAsUser:  ptr.To(int64(ClientRegistrationUID)),
-			RunAsGroup: ptr.To(int64(ClientRegistrationGID)),
-		},
 		VolumeMounts: []corev1.VolumeMount{
 			{
 				Name:      "spiffe-helper-config",
@@ -87,6 +79,11 @@ func (b *ContainerBuilder) BuildSpiffeHelperContainer() corev1.Container {
 				Name:      "shared-data",
 				MountPath: "/shared",
 			},
+		},
+		SecurityContext: &corev1.SecurityContext{
+			RunAsUser:    ptr.To(int64(ClientRegistrationUID)),
+			RunAsGroup:   ptr.To(int64(ClientRegistrationGID)),
+			RunAsNonRoot: ptr.To(true),
 		},
 	}
 }
@@ -457,24 +454,4 @@ func (b *ContainerBuilder) BuildProxyInitContainer() corev1.Container {
 			Privileged:   ptr.To(true),
 		},
 	}
-}
-
-// Backward-compatible package-level wrappers using compiled defaults.
-// These are called by PodMutator and will be removed in Phase 4
-// when PodMutator is rewired to use ContainerBuilder directly.
-
-func BuildSpiffeHelperContainer() corev1.Container {
-	return NewContainerBuilder(nil).BuildSpiffeHelperContainer()
-}
-
-func BuildClientRegistrationContainerWithSpireOption(name, namespace string, spireEnabled bool) corev1.Container {
-	return NewContainerBuilder(nil).BuildClientRegistrationContainerWithSpireOption(name, namespace, spireEnabled)
-}
-
-func BuildEnvoyProxyContainer() corev1.Container {
-	return NewContainerBuilder(nil).BuildEnvoyProxyContainer()
-}
-
-func BuildProxyInitContainer() corev1.Container {
-	return NewContainerBuilder(nil).BuildProxyInitContainer()
 }

@@ -54,6 +54,8 @@ func SetupAuthBridgeWebhookWithManager(mgr ctrl.Manager, mutator *injector.PodMu
 }
 
 // Handle processes admission requests for workload resources
+//
+//nolint:gocritic // hugeParam: admission.Handler interface requires value receiver for admission.Request
 func (w *AuthBridgeWebhook) Handle(ctx context.Context, req admission.Request) admission.Response {
 	authbridgelog.Info("AuthBridge webhook called",
 		"kind", req.Kind.Kind,
@@ -167,19 +169,19 @@ func (w *AuthBridgeWebhook) Handle(ctx context.Context, req admission.Request) a
 }
 
 func (w *AuthBridgeWebhook) isAlreadyInjected(podSpec *corev1.PodSpec) bool {
-	// Check sidecar containers (envoy-proxy is always injected by the AuthBridge path,
-	// so it serves as a reliable marker even when spiffe-helper and client-registration
-	// are both disabled via their respective flags)
-	for _, container := range podSpec.Containers {
-		if container.Name == injector.EnvoyProxyContainerName ||
-			container.Name == injector.SpiffeHelperContainerName ||
-			container.Name == injector.ClientRegistrationContainerName {
+	// Check sidecar containers. Any one of these being present means the full
+	// injection cycle already ran for this pod (each Build* call is guarded by
+	// containerExists/volumeExists checks for idempotency).
+	for i := range podSpec.Containers {
+		if podSpec.Containers[i].Name == injector.EnvoyProxyContainerName ||
+			podSpec.Containers[i].Name == injector.SpiffeHelperContainerName ||
+			podSpec.Containers[i].Name == injector.ClientRegistrationContainerName {
 			return true
 		}
 	}
 	// Also check init containers — proxy-init is always injected by InjectAuthBridge
-	for _, container := range podSpec.InitContainers {
-		if container.Name == injector.ProxyInitContainerName {
+	for i := range podSpec.InitContainers {
+		if podSpec.InitContainers[i].Name == injector.ProxyInitContainerName {
 			return true
 		}
 	}
