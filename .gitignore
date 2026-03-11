@@ -55,15 +55,19 @@ venv
 # Secrets and credentials
 .env
 .env.*
+!.env.example
+!.env.template
 .env.local
 *.key
 *.pem
 *.p12
 *.jks
-credentials.*
-secrets.*
+credentials.json
+credentials.env
+secrets.json
+secrets.env
 kubeconfig
-*kubeconfig*
+*.kubeconfig
 
 # Python
 __pycache__/
