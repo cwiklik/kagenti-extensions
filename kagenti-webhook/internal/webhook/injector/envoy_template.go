@@ -19,7 +19,7 @@ package injector
 import (
 	"bytes"
 	_ "embed"
-	"text/template"
+	"text/template" // text/template (not html/template) — YAML output, no HTML escaping needed
 )
 
 //go:embed envoy.yaml.tmpl
@@ -32,7 +32,11 @@ type envoyTemplateData struct {
 	AdminPort    int32
 	OutboundPort int32
 	InboundPort  int32
+	ExtProcPort  int32
 }
+
+// Default ext-proc gRPC port (go-processor).
+const defaultExtProcPort int32 = 9090
 
 // RenderEnvoyConfig generates an envoy.yaml from the resolved config.
 // If the resolved config already contains an EnvoyYAML string (from the
@@ -46,6 +50,7 @@ func RenderEnvoyConfig(cfg *ResolvedConfig) (string, error) {
 		AdminPort:    cfg.Platform.Proxy.AdminPort,
 		OutboundPort: cfg.Platform.Proxy.Port,
 		InboundPort:  cfg.Platform.Proxy.InboundProxyPort,
+		ExtProcPort:  defaultExtProcPort,
 	}
 
 	var buf bytes.Buffer

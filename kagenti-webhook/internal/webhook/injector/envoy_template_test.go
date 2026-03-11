@@ -61,6 +61,9 @@ func TestRenderEnvoyConfig_TemplateRendering(t *testing.T) {
 	if !strings.Contains(result, "ext_proc_cluster") {
 		t.Error("expected ext_proc_cluster in rendered config")
 	}
+	if !strings.Contains(result, "port_value: 9090") {
+		t.Error("expected ext_proc port 9090 in rendered config")
+	}
 	if !strings.Contains(result, "original_destination") {
 		t.Error("expected original_destination cluster in rendered config")
 	}

@@ -95,6 +95,9 @@ func ResolveConfig(platform *config.PlatformConfig, ns *NamespaceConfig, ar *Age
 		if ar.ClientRegistrationRealm != nil {
 			resolved.KeycloakRealm = *ar.ClientRegistrationRealm
 		}
+		// TODO: AdminCredentialsSecretName/Namespace overrides require reading a
+		// different Secret at namespace-config time (not a simple value override).
+		// Deferred until AgentRuntime CRD is merged and the full flow is testable.
 		if ar.TraceEndpoint != nil {
 			resolved.TraceEndpoint = *ar.TraceEndpoint
 		}

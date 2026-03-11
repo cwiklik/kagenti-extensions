@@ -217,6 +217,10 @@ tail -f /dev/null
 }
 
 // buildClientRegistrationEnvResolved returns literal env vars from resolved config.
+// Note: KEYCLOAK_ADMIN_USERNAME/PASSWORD are injected as literal values, making
+// them visible in the Pod spec (kubectl get pod -o yaml). This is equivalent to
+// the legacy ValueFrom pattern where kubelet resolves the Secret at startup —
+// the secret is visible in the Pod spec either way.
 func (b *ContainerBuilder) buildClientRegistrationEnvResolved(clientName string, spireEnabled bool) []corev1.EnvVar {
 	return []corev1.EnvVar{
 		{Name: "SPIRE_ENABLED", Value: fmt.Sprintf("%t", spireEnabled)},
