@@ -55,7 +55,11 @@ func (c *NamespaceConfigCache) GetOrLoad(ctx context.Context, reader client.Read
 	}
 	c.mu.RUnlock()
 
-	// Slow path: read from API server, then store
+	// Slow path: read from API server, then store.
+	// Note: concurrent goroutines missing the cache for the same namespace will
+	// each call ReadNamespaceConfig. The double-check below ensures only one
+	// result is stored. This is acceptable because webhook admission is typically
+	// serialized per-pod and the reads are idempotent.
 	cfg, err := ReadNamespaceConfig(ctx, reader, namespace)
 	if err != nil {
 		return nil, err

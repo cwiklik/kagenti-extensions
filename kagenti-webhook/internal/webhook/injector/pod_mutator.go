@@ -248,12 +248,7 @@ func (m *PodMutator) InjectAuthBridge(ctx context.Context, podSpec *corev1.PodSp
 
 	// Inject volumes — use resolved volumes with namespace ConfigMap references.
 	// The volume names remain the same so existing mount paths work.
-	var requiredVolumes []corev1.Volume
-	if spireEnabled {
-		requiredVolumes = BuildRequiredVolumes()
-	} else {
-		requiredVolumes = BuildRequiredVolumesNoSpire()
-	}
+	requiredVolumes := BuildResolvedVolumes(spireEnabled, "")
 	for i := range requiredVolumes {
 		if !volumeExists(podSpec.Volumes, requiredVolumes[i].Name) {
 			podSpec.Volumes = append(podSpec.Volumes, requiredVolumes[i])
