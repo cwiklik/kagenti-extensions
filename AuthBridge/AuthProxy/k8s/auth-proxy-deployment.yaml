@@ -237,10 +237,11 @@ data:
               - name: envoy.filters.http.lua
                 typed_config:
                   "@type": type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
-                  inline_code: |
-                    function envoy_on_request(request_handle)
-                      request_handle:headers():add("x-authbridge-direction", "inbound")
-                    end
+                  default_source_code:
+                    inline_string: |
+                      function envoy_on_request(request_handle)
+                        request_handle:headers():add("x-authbridge-direction", "inbound")
+                      end
               - name: envoy.filters.http.ext_proc
                 typed_config:
                   "@type": type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExternalProcessor
