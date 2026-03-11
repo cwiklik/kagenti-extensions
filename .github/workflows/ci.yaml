@@ -85,7 +85,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install pytest python-keycloak pyjwt
+          pip install pytest==8.* python-keycloak==5.3.1 pyjwt==2.10.1
 
       - name: Run tests
         run: pytest tests/ -v

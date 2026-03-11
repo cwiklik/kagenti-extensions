@@ -116,7 +116,7 @@ jobs:
           echo ""
           echo "=== Summary ==="
           yamllint -c .yamllint.yaml -f parsable \
-            .github/workflows/ charts/ 2>&1 > /tmp/yamllint_output.txt || true
+            .github/workflows/ charts/ > /tmp/yamllint_output.txt 2>&1 || true
           ERROR_COUNT=$(grep -c ":error:" /tmp/yamllint_output.txt 2>/dev/null || echo "0")
           echo "Errors: $ERROR_COUNT"
           if [ "$ERROR_COUNT" -gt 0 ] 2>/dev/null; then
@@ -142,6 +142,7 @@ jobs:
           for chart in charts/*/; do
             if [ -f "$chart/Chart.yaml" ]; then
               echo "Linting: $chart"
+              # Informational only — don't fail on pre-existing chart issues
               helm lint "$chart" 2>&1 || true
               echo ""
             fi
@@ -310,7 +311,7 @@ jobs:
       - name: Check for unpinned GitHub Actions
         run: |
           echo "=== Checking for unpinned GitHub Actions ==="
-          UNPINNED=$(grep -rh "uses:" .github/workflows/ | grep -v "#" | grep -E "@v[0-9]|@main|@master" | sort -u || true)
+          UNPINNED=$(grep -rh "uses:" .github/workflows/ | grep -v "#" | grep -E 'uses:.*@' | grep -vE '@[0-9a-f]{40}' | sort -u || true)
           if [ -n "$UNPINNED" ]; then
             echo "::warning::Found actions not pinned to SHA commits:"
             echo "$UNPINNED"
