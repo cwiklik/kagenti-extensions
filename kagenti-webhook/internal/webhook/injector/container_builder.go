@@ -413,7 +413,7 @@ func (b *ContainerBuilder) buildEnvoyProxyEnvLegacy() []corev1.EnvVar {
 				ConfigMapKeyRef: &corev1.ConfigMapKeySelector{
 					LocalObjectReference: corev1.LocalObjectReference{Name: "authbridge-config"},
 					Key:                  "ISSUER",
-					Optional:             ptr.To(false),
+					Optional:             ptr.To(true),
 				},
 			},
 		},
