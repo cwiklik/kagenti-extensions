@@ -28,13 +28,12 @@ type ResolvedConfig struct {
 	Platform *config.PlatformConfig
 
 	// Identity — merged from namespace CMs + AgentRuntime overrides
-	KeycloakURL       string
-	KeycloakRealm     string
-	KeycloakAdminUser string
-	KeycloakAdminPass string
-	SpireEnabled      string
-	SpiffeTrustDomain string
-	PlatformClientIDs string
+	KeycloakURL                string
+	KeycloakRealm              string
+	AdminCredentialsSecretName string // Secret name for KEYCLOAK_ADMIN_USERNAME/PASSWORD (default: "keycloak-admin-secret")
+	SpireEnabled               string
+	SpiffeTrustDomain          string
+	PlatformClientIDs          string
 
 	// Token exchange — from namespace CMs (not overridable by AgentRuntime v1alpha1)
 	TokenURL              string
@@ -69,22 +68,21 @@ func ResolveConfig(platform *config.PlatformConfig, ns *NamespaceConfig, ar *Age
 		Platform: platform,
 
 		// Start with namespace CM values
-		KeycloakURL:           ns.KeycloakURL,
-		KeycloakRealm:         ns.KeycloakRealm,
-		KeycloakAdminUser:     ns.KeycloakAdminUser,
-		KeycloakAdminPass:     ns.KeycloakAdminPass,
-		SpireEnabled:          ns.SpireEnabled,
-		SpiffeTrustDomain:     platform.Spiffe.TrustDomain,
-		PlatformClientIDs:     ns.PlatformClientIDs,
-		TokenURL:              ns.TokenURL,
-		Issuer:                ns.Issuer,
-		ExpectedAudience:      ns.ExpectedAudience,
-		TargetAudience:        ns.TargetAudience,
-		TargetScopes:          ns.TargetScopes,
-		DefaultOutboundPolicy: ns.DefaultOutboundPolicy,
-		SpiffeHelperConf:      ns.SpiffeHelperConf,
-		EnvoyYAML:             ns.EnvoyYAML,
-		AuthproxyRoutesYAML:   ns.AuthproxyRoutesYAML,
+		KeycloakURL:                ns.KeycloakURL,
+		KeycloakRealm:              ns.KeycloakRealm,
+		AdminCredentialsSecretName: KeycloakAdminSecretName,
+		SpireEnabled:               ns.SpireEnabled,
+		SpiffeTrustDomain:          platform.Spiffe.TrustDomain,
+		PlatformClientIDs:          ns.PlatformClientIDs,
+		TokenURL:                   ns.TokenURL,
+		Issuer:                     ns.Issuer,
+		ExpectedAudience:           ns.ExpectedAudience,
+		TargetAudience:             ns.TargetAudience,
+		TargetScopes:               ns.TargetScopes,
+		DefaultOutboundPolicy:      ns.DefaultOutboundPolicy,
+		SpiffeHelperConf:           ns.SpiffeHelperConf,
+		EnvoyYAML:                  ns.EnvoyYAML,
+		AuthproxyRoutesYAML:        ns.AuthproxyRoutesYAML,
 	}
 
 	// Apply AgentRuntime overrides (highest precedence)

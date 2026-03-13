@@ -28,8 +28,11 @@ var cacheLog = logf.Log.WithName("namespace-config-cache")
 
 // NamespaceConfigCache provides thread-safe per-namespace caching of
 // NamespaceConfig values. When the cache has an entry for a namespace, it is
-// returned without hitting the API server. The cache lives in memory and is
-// cleared on webhook pod restart.
+// returned without hitting the API server.
+//
+// The cache has no TTL — entries persist until the webhook pod restarts.
+// If a namespace ConfigMap changes (e.g. Keycloak URL migration), restart the
+// webhook pod to flush stale entries.
 type NamespaceConfigCache struct {
 	mu    sync.RWMutex
 	store map[string]*NamespaceConfig

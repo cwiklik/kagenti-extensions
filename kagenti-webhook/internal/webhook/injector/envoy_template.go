@@ -41,6 +41,10 @@ const defaultExtProcPort int32 = 9090
 // RenderEnvoyConfig generates an envoy.yaml from the resolved config.
 // If the resolved config already contains an EnvoyYAML string (from the
 // namespace ConfigMap), it is returned as-is for backward compatibility.
+//
+// TODO: wire RenderEnvoyConfig into the admission pipeline when per-workload
+// ConfigMap creation is implemented. Currently this function is only used in
+// unit tests.
 func RenderEnvoyConfig(cfg *ResolvedConfig) (string, error) {
 	if cfg.EnvoyYAML != "" {
 		return cfg.EnvoyYAML, nil
