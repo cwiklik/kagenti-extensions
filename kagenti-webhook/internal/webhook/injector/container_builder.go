@@ -216,18 +216,37 @@ tail -f /dev/null
 	}
 }
 
-// buildClientRegistrationEnvResolved returns literal env vars from resolved config.
-// Note: KEYCLOAK_ADMIN_USERNAME/PASSWORD are injected as literal values, making
-// them visible in the Pod spec (kubectl get pod -o yaml). This is equivalent to
-// the legacy ValueFrom pattern where kubelet resolves the Secret at startup —
-// the secret is visible in the Pod spec either way.
+// buildClientRegistrationEnvResolved returns env vars from resolved config.
+// Non-sensitive values (URLs, realm, client name) are injected as literals.
+// Sensitive values (KEYCLOAK_ADMIN_USERNAME/PASSWORD) use SecretKeyRef to keep
+// credentials out of the Pod spec — only a reference to the Secret is stored.
 func (b *ContainerBuilder) buildClientRegistrationEnvResolved(clientName string, spireEnabled bool) []corev1.EnvVar {
+	secretName := b.resolved.AdminCredentialsSecretName
+	if secretName == "" {
+		secretName = "keycloak-admin-secret"
+	}
 	return []corev1.EnvVar{
 		{Name: "SPIRE_ENABLED", Value: fmt.Sprintf("%t", spireEnabled)},
 		{Name: "KEYCLOAK_URL", Value: b.resolved.KeycloakURL},
 		{Name: "KEYCLOAK_REALM", Value: b.resolved.KeycloakRealm},
-		{Name: "KEYCLOAK_ADMIN_USERNAME", Value: b.resolved.KeycloakAdminUser},
-		{Name: "KEYCLOAK_ADMIN_PASSWORD", Value: b.resolved.KeycloakAdminPass},
+		{
+			Name: "KEYCLOAK_ADMIN_USERNAME",
+			ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: secretName},
+					Key:                  "KEYCLOAK_ADMIN_USERNAME",
+				},
+			},
+		},
+		{
+			Name: "KEYCLOAK_ADMIN_PASSWORD",
+			ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: secretName},
+					Key:                  "KEYCLOAK_ADMIN_PASSWORD",
+				},
+			},
+		},
 		{Name: "CLIENT_NAME", Value: clientName},
 		{Name: "SECRET_FILE_PATH", Value: "/shared/client-secret.txt"},
 		{Name: "PLATFORM_CLIENT_IDS", Value: b.resolved.PlatformClientIDs},

@@ -188,8 +188,10 @@ func (m *PodMutator) InjectAuthBridge(ctx context.Context, podSpec *corev1.PodSp
 	// ========================================
 
 	// 1. Read namespace config (ConfigMaps/Secrets in the target namespace).
-	//    When perWorkloadConfigResolution is false (default), use cached values
-	//    to avoid repeated API calls — namespace ConfigMaps rarely change.
+	//    Both paths produce resolved (literal) env vars via NewResolvedContainerBuilder.
+	//    The feature gate controls caching only:
+	//      perWorkloadConfigResolution=true  → fresh API read per admission request
+	//      perWorkloadConfigResolution=false → cached per-namespace (default)
 	var nsConfig *NamespaceConfig
 	var err error
 	if currentGates.PerWorkloadConfigResolution {
