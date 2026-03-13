@@ -114,6 +114,10 @@ jobs:
             echo "Attempt $i: CA bundle not yet injected, waiting..."
             sleep 3
           done
+          if [ -z "$CA" ] || [ ${#CA} -le 10 ]; then
+            echo "ERROR: CA bundle was not injected after 30 attempts (90s)"
+            exit 1
+          fi
 
       # -----------------------------------------------------------------------
       # Python e2e tests
@@ -126,7 +130,9 @@ jobs:
         env:
           WEBHOOK_NAMESPACE: kagenti-webhook-system
           TEST_NAMESPACE: kagenti-webhook-test
-        run: pytest tests/e2e/ -v --timeout=120 --tb=short
+        run: |
+          mkdir -p test-results
+          pytest tests/e2e/ -v --timeout=120 --tb=short --junitxml=test-results/e2e.xml
 
       # -----------------------------------------------------------------------
       # Cleanup (always runs to avoid orphaned resources)

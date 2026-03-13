@@ -63,7 +63,7 @@ def _build_test_pod(name, labels):
             containers=[
                 client.V1Container(
                     name=_APP_CONTAINER,
-                    image="busybox:latest",
+                    image="busybox:1.37",
                     command=["sh", "-c", "sleep 3600"],
                 )
             ],
@@ -71,18 +71,6 @@ def _build_test_pod(name, labels):
             node_selector={"non-existent-node": "true"},
         ),
     )
-
-
-def _create_pod_and_cleanup(k8s_client, namespace, pod):
-    """Create a pod, return the API response (with injected spec), then delete it."""
-    created = k8s_client.create_namespaced_pod(namespace=namespace, body=pod)
-    try:
-        yield created
-    finally:
-        try:
-            k8s_client.delete_namespaced_pod(name=pod.metadata.name, namespace=namespace)
-        except ApiException:
-            pass  # Best effort cleanup
 
 
 class TestAgentSidecarInjection:
@@ -341,7 +329,7 @@ class TestInjectionIdempotency:
                 containers=[
                     client.V1Container(
                         name=_APP_CONTAINER,
-                        image="busybox:latest",
+                        image="busybox:1.37",
                         command=["sh", "-c", "sleep 3600"],
                     ),
                     # Pre-existing envoy-proxy triggers isAlreadyInjected()
