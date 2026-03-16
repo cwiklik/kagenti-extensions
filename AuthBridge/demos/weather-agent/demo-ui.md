@@ -306,9 +306,14 @@ The service maps **port 8080** to the agent's internal port 8000.
 
 ---
 
-## Step 4: Verify Ollama is Running
+## Step 4: Verify LLM Provider
 
-The agent uses an LLM for inference. If using Ollama, verify it is running:
+The agent uses an LLM for inference. Follow the section that matches your chosen
+provider.
+
+### Option A: Ollama (local models)
+
+Verify Ollama is running:
 
 ```bash
 ollama list
@@ -326,7 +331,7 @@ and ensure the model is pulled (`ollama pull llama3.2:3b-instruct-fp16`).
 >   LLM_API_BASE="http://ollama.ollama.svc:11434/v1"
 > ```
 
-### Known Issue: Ollama Port Exclusion
+#### Known Issue: Ollama Port Exclusion
 
 AuthBridge's `proxy-init` init container sets up iptables rules to redirect
 traffic through Envoy. By default, only port 8080 is excluded from redirection.
@@ -355,9 +360,31 @@ This is tracked in
 and will be resolved when `OUTBOUND_PORTS_EXCLUDE` becomes configurable via
 annotation or ConfigMap.
 
-> **OpenAI users:** If using OpenAI (`LLM_API_BASE=https://api.openai.com/v1`),
-> this workaround is **not needed** — HTTPS traffic uses TLS passthrough and is
-> not intercepted by Envoy.
+### Option B: OpenAI
+
+Verify the OpenAI secret was created (Step 2, item 11):
+
+```bash
+kubectl get secret openai-secret -n team1
+```
+
+Verify the agent has the correct environment variables:
+
+```bash
+kubectl exec deployment/weather-service -n team1 -c agent -- env | grep -E "LLM_|OPENAI"
+```
+
+Expected:
+
+```
+LLM_API_BASE=https://api.openai.com/v1
+LLM_MODEL=gpt-4o-mini-2024-07-18
+LLM_API_KEY=sk-...
+OPENAI_API_KEY=sk-...
+```
+
+> **Note:** OpenAI uses HTTPS, which AuthBridge passes through via TLS passthrough.
+> No Ollama port exclusion workaround is needed.
 
 ---
 
