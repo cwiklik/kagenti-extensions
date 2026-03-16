@@ -225,7 +225,7 @@ tail -f /dev/null
 func (b *ContainerBuilder) buildClientRegistrationEnvResolved(clientName string, spireEnabled bool) []corev1.EnvVar {
 	secretName := b.resolved.AdminCredentialsSecretName
 	if secretName == "" {
-		secretName = "keycloak-admin-secret"
+		secretName = KeycloakAdminSecretName
 	}
 	return []corev1.EnvVar{
 		{Name: "SPIRE_ENABLED", Value: fmt.Sprintf("%t", spireEnabled)},

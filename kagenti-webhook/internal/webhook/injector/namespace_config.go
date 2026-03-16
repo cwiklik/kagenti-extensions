@@ -52,10 +52,6 @@ type NamespaceConfig struct {
 	TargetScopes          string
 	DefaultOutboundPolicy string
 
-	// From "keycloak-admin-secret" Secret
-	KeycloakAdminUser string
-	KeycloakAdminPass string
-
 	// From "spiffe-helper-config" ConfigMap
 	SpiffeHelperConf string // raw helper.conf content
 
@@ -94,13 +90,9 @@ func ReadNamespaceConfig(ctx context.Context, c client.Reader, namespace string)
 		cfg.DefaultOutboundPolicy = cm.Data["DEFAULT_OUTBOUND_POLICY"]
 	}
 
-	// Read "keycloak-admin-secret" Secret
-	if secret, err := getSecret(ctx, c, namespace, KeycloakAdminSecretName); err != nil {
-		nsConfigLog.V(1).Info("Secret not found", "name", KeycloakAdminSecretName, "namespace", namespace, "error", err)
-	} else {
-		cfg.KeycloakAdminUser = string(secret.Data["KEYCLOAK_ADMIN_USERNAME"])
-		cfg.KeycloakAdminPass = string(secret.Data["KEYCLOAK_ADMIN_PASSWORD"])
-	}
+	// Note: keycloak-admin-secret is not read here. The resolved container builder
+	// uses SecretKeyRef to reference the secret by name, keeping credentials out of
+	// the NamespaceConfig struct and the webhook's memory.
 
 	// Read "spiffe-helper-config" ConfigMap
 	if cm, err := getConfigMap(ctx, c, namespace, SpiffeHelperConfigMapName); err != nil {
@@ -132,12 +124,4 @@ func getConfigMap(ctx context.Context, c client.Reader, namespace, name string) 
 		return nil, err
 	}
 	return cm, nil
-}
-
-func getSecret(ctx context.Context, c client.Reader, namespace, name string) (*corev1.Secret, error) {
-	secret := &corev1.Secret{}
-	if err := c.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, secret); err != nil {
-		return nil, err
-	}
-	return secret, nil
 }

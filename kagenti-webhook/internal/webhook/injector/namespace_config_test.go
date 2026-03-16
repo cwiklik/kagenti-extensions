@@ -54,13 +54,6 @@ func TestReadNamespaceConfig_AllPresent(t *testing.T) {
 			"DEFAULT_OUTBOUND_POLICY": "passthrough",
 		},
 	}
-	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: KeycloakAdminSecretName, Namespace: "ns1"},
-		Data: map[string][]byte{
-			"KEYCLOAK_ADMIN_USERNAME": []byte("admin"),
-			"KEYCLOAK_ADMIN_PASSWORD": []byte("secret"),
-		},
-	}
 	spiffeCM := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{Name: SpiffeHelperConfigMapName, Namespace: "ns1"},
 		Data:       map[string]string{"helper.conf": "agent_address = \"/spiffe-workload-api/spire-agent.sock\""},
@@ -74,7 +67,7 @@ func TestReadNamespaceConfig_AllPresent(t *testing.T) {
 		Data:       map[string]string{"routes.yaml": "routes: []"},
 	}
 
-	reader := newFakeReader(envCM, abCM, secret, spiffeCM, envoyCM, routesCM)
+	reader := newFakeReader(envCM, abCM, spiffeCM, envoyCM, routesCM)
 	cfg, err := ReadNamespaceConfig(context.Background(), reader, "ns1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -91,12 +84,6 @@ func TestReadNamespaceConfig_AllPresent(t *testing.T) {
 	}
 	if cfg.Issuer != "http://keycloak:8080/realms/demo" {
 		t.Errorf("Issuer = %q", cfg.Issuer)
-	}
-	if cfg.KeycloakAdminUser != "admin" {
-		t.Errorf("KeycloakAdminUser = %q", cfg.KeycloakAdminUser)
-	}
-	if cfg.KeycloakAdminPass != "secret" {
-		t.Errorf("KeycloakAdminPass = %q", cfg.KeycloakAdminPass)
 	}
 	if cfg.SpiffeHelperConf == "" {
 		t.Error("SpiffeHelperConf is empty")
@@ -146,8 +133,8 @@ func TestReadNamespaceConfig_PartialConfig(t *testing.T) {
 		t.Errorf("KeycloakURL = %q", cfg.KeycloakURL)
 	}
 	// Other fields should be empty
-	if cfg.TokenURL != "" || cfg.Issuer != "" || cfg.KeycloakAdminUser != "" {
-		t.Errorf("expected missing fields to be empty, got tokenURL=%q issuer=%q admin=%q",
-			cfg.TokenURL, cfg.Issuer, cfg.KeycloakAdminUser)
+	if cfg.TokenURL != "" || cfg.Issuer != "" {
+		t.Errorf("expected missing fields to be empty, got tokenURL=%q issuer=%q",
+			cfg.TokenURL, cfg.Issuer)
 	}
 }

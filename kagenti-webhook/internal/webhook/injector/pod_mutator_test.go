@@ -37,7 +37,6 @@ func newTestMutator(objs ...client.Object) *PodMutator {
 		EnableClientRegistration: true,
 		GetPlatformConfig:        config.CompiledDefaults,
 		GetFeatureGates:          config.DefaultFeatureGates,
-		nsConfigCache:            NewNamespaceConfigCache(),
 	}
 }
 

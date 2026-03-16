@@ -19,6 +19,7 @@ package injector
 import (
 	"bytes"
 	_ "embed"
+	"fmt"
 	"text/template" // text/template (not html/template) — YAML output, no HTML escaping needed
 )
 
@@ -59,7 +60,7 @@ func RenderEnvoyConfig(cfg *ResolvedConfig) (string, error) {
 
 	var buf bytes.Buffer
 	if err := envoyTemplate.Execute(&buf, data); err != nil {
-		return "", err
+		return "", fmt.Errorf("executing envoy template: %w", err)
 	}
 	return buf.String(), nil
 }

@@ -77,9 +77,6 @@ type PodMutator struct {
 	// Getter functions for hot-reloadable config (used by precedence evaluator)
 	GetPlatformConfig func() *config.PlatformConfig
 	GetFeatureGates   func() *config.FeatureGates
-	// nsConfigCache caches namespace ConfigMap/Secret reads across workloads.
-	// Used when featureGates.perWorkloadConfigResolution is false (default).
-	nsConfigCache *NamespaceConfigCache
 }
 
 func NewPodMutator(
@@ -93,7 +90,6 @@ func NewPodMutator(
 		EnableClientRegistration: enableClientRegistration,
 		GetPlatformConfig:        getPlatformConfig,
 		GetFeatureGates:          getFeatureGates,
-		nsConfigCache:            NewNamespaceConfigCache(),
 	}
 }
 
@@ -189,46 +185,56 @@ func (m *PodMutator) InjectAuthBridge(ctx context.Context, podSpec *corev1.PodSp
 	}
 
 	// ========================================
-	// Config resolution pipeline
+	// Build containers + volumes
 	// ========================================
+	//
+	// Two modes controlled by the perWorkloadConfigResolution feature gate:
+	//   false (default) → legacy path: ValueFrom refs for env vars, kubelet
+	//                     resolves ConfigMap/Secret values at container start.
+	//   true            → resolved path: webhook reads namespace ConfigMaps/
+	//                     Secrets at admission time and injects literal values.
 
-	// 1. Read namespace config (ConfigMaps/Secrets in the target namespace).
-	//    Both paths produce resolved (literal) env vars via NewResolvedContainerBuilder.
-	//    The feature gate controls caching only:
-	//      perWorkloadConfigResolution=true  → fresh API read per admission request
-	//      perWorkloadConfigResolution=false → cached per-namespace (default)
-	var nsConfig *NamespaceConfig
-	var err error
+	var builder *ContainerBuilder
+	var requiredVolumes []corev1.Volume
+
 	if currentGates.PerWorkloadConfigResolution {
+		// Resolved path: read namespace config and build literal env vars
+		var nsConfig *NamespaceConfig
+		var err error
 		mutatorLog.V(1).Info("reading namespace config per-workload", "namespace", namespace)
 		nsConfig, err = ReadNamespaceConfig(ctx, m.Client, namespace)
 		if err != nil {
-			mutatorLog.Info("Warning: failed to read namespace config, using empty defaults",
-				"namespace", namespace, "error", err)
+			mutatorLog.Error(err, "failed to read namespace config, using empty defaults",
+				"namespace", namespace)
 			nsConfig = &NamespaceConfig{}
 		}
-	} else {
-		nsConfig, err = m.nsConfigCache.GetOrLoad(ctx, m.Client, namespace)
+
+		// Read AgentRuntime overrides (nil if CR not found or CRD not installed)
+		var arOverrides *AgentRuntimeOverrides
+		arOverrides, err = ReadAgentRuntimeOverrides(ctx, m.Client, namespace, crName)
 		if err != nil {
-			mutatorLog.Info("Warning: failed to load namespace config from cache, using empty defaults",
-				"namespace", namespace, "error", err)
-			nsConfig = &NamespaceConfig{}
+			mutatorLog.Error(err, "failed to read AgentRuntime overrides, continuing without",
+				"namespace", namespace, "crName", crName)
 		}
+
+		resolved := ResolveConfig(currentConfig, nsConfig, arOverrides)
+		builder = NewResolvedContainerBuilder(resolved)
+		requiredVolumes = BuildResolvedVolumes(spireEnabled, "")
+
+		mutatorLog.Info("Using resolved config path",
+			"namespace", namespace, "crName", crName,
+			"hasAgentRuntimeOverrides", arOverrides != nil)
+	} else {
+		// Legacy path: ValueFrom refs, kubelet resolves at runtime
+		builder = NewContainerBuilder(currentConfig)
+		if spireEnabled {
+			requiredVolumes = BuildRequiredVolumes()
+		} else {
+			requiredVolumes = BuildRequiredVolumesNoSpire()
+		}
+		mutatorLog.Info("Using legacy ValueFrom config path",
+			"namespace", namespace, "crName", crName)
 	}
-
-	// 2. Read AgentRuntime overrides (nil if CR not found or CRD not installed)
-	var arOverrides *AgentRuntimeOverrides
-	arOverrides, err = ReadAgentRuntimeOverrides(ctx, m.Client, namespace, crName)
-	if err != nil {
-		mutatorLog.Info("Warning: failed to read AgentRuntime overrides, continuing without",
-			"namespace", namespace, "crName", crName, "error", err)
-	}
-
-	// 3. Merge into resolved config
-	resolved := ResolveConfig(currentConfig, nsConfig, arOverrides)
-
-	// 4. Build containers using resolved config (literal env vars)
-	builder := NewResolvedContainerBuilder(resolved)
 
 	// Conditionally inject sidecars based on precedence decisions
 	if decision.EnvoyProxy.Inject && !containerExists(podSpec.Containers, EnvoyProxyContainerName) {
@@ -248,9 +254,7 @@ func (m *PodMutator) InjectAuthBridge(ctx context.Context, podSpec *corev1.PodSp
 		podSpec.Containers = append(podSpec.Containers, builder.BuildClientRegistrationContainerWithSpireOption(crName, namespace, spireEnabled))
 	}
 
-	// Inject volumes — use resolved volumes with namespace ConfigMap references.
-	// The volume names remain the same so existing mount paths work.
-	requiredVolumes := BuildResolvedVolumes(spireEnabled, "")
+	// Inject volumes
 	for i := range requiredVolumes {
 		if !volumeExists(podSpec.Volumes, requiredVolumes[i].Name) {
 			podSpec.Volumes = append(podSpec.Volumes, requiredVolumes[i])
@@ -261,8 +265,7 @@ func (m *PodMutator) InjectAuthBridge(ctx context.Context, podSpec *corev1.PodSp
 		"containers", len(podSpec.Containers),
 		"initContainers", len(podSpec.InitContainers),
 		"volumes", len(podSpec.Volumes),
-		"spireEnabled", spireEnabled,
-		"hasAgentRuntimeOverrides", arOverrides != nil)
+		"spireEnabled", spireEnabled)
 	return true, nil
 }
 
