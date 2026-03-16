@@ -103,7 +103,7 @@ Extensively documented shell script that sets up iptables for transparent traffi
 
 - **Outbound**: `PROXY_OUTPUT` chain in `nat OUTPUT`, redirects to Envoy port 15123
 - **Inbound**: `PROXY_INBOUND` chain in `nat PREROUTING`, redirects to Envoy port 15124
-- **Istio ambient mesh coexistence**: Handles ztunnel fwmark (0x539), HBONE port (15008), route_localnet sysctl
+- **Istio ambient mesh coexistence**: Handles ztunnel fwmark (0x539), HBONE port (15008), DNAT to POD_IP for inbound interception
 - **Exclusions**: SSH (22), loopback, configurable `OUTBOUND_PORTS_EXCLUDE` and `INBOUND_PORTS_EXCLUDE`
 - **Envoy UID 1337**: Excluded from outbound redirect to prevent loops
 - **Mangle rule**: Sets fwmark on Envoy's local delivery to prevent ISTIO_OUTPUT redirect loop
@@ -117,6 +117,7 @@ Extensively documented shell script that sets up iptables for transparent traffi
 | `PROXY_UID` | 1337 | Envoy process UID (excluded from redirect) |
 | `OUTBOUND_PORTS_EXCLUDE` | (empty) | Comma-separated ports to exclude |
 | `INBOUND_PORTS_EXCLUDE` | (empty) | Comma-separated ports to exclude |
+| `POD_IP` | (required) | Pod IP via Downward API; used as DNAT target for ambient mesh inbound interception |
 
 ### client_registration.py
 
