@@ -120,7 +120,9 @@ You should also have:
 - The [kagenti-extensions](https://github.com/kagenti/kagenti-extensions) repo cloned
 - The Kagenti UI running at `http://kagenti-ui.localtest.me:8080`
 - Python 3.9+ with `venv` support
-- **Ollama running** with the `ibm/granite4:latest` model (or another model of your choice)
+- An LLM provider — either **Ollama** with `ibm/granite4:latest` (or another model)
+  or an **OpenAI API key** (recommended for reliable function calling;
+  see [agent-examples#173](https://github.com/kagenti/agent-examples/issues/173))
 - Two GitHub Personal Access Tokens (PATs):
   - `<PUBLIC_ACCESS_PAT>` — access to public repositories only
   - `<PRIVILEGED_ACCESS_PAT>` — access to all repositories
@@ -183,24 +185,23 @@ This creates:
 
 ---
 
-## Step 2: Create Keycloak Admin Secret and Apply Demo ConfigMaps
+## Step 2: Apply Demo ConfigMaps
 
 The Kagenti installer creates default ConfigMaps (`authbridge-config`,
-`spiffe-helper-config`, `envoy-config`) with the correct `kagenti` realm
-settings and 300s Envoy timeouts.
+`spiffe-helper-config`, `envoy-config`) and the `keycloak-admin-secret` Secret
+in the target namespace with the correct `kagenti` realm settings and 300s Envoy
+timeouts. No manual secret creation is needed for this demo.
 
-The client-registration sidecar needs Keycloak admin credentials to register
-agents as OAuth clients. These are stored in a Kubernetes Secret (not a
-ConfigMap) to follow security best practices:
+> If your Keycloak admin credentials differ from the default (`admin`/`admin`),
+> update the secret:
+> ```bash
+> kubectl create secret generic keycloak-admin-secret -n team1 \
+>   --from-literal=KEYCLOAK_ADMIN_USERNAME=<your-admin-user> \
+>   --from-literal=KEYCLOAK_ADMIN_PASSWORD=<your-admin-password> \
+>   --dry-run=client -o yaml | kubectl apply -f -
+> ```
 
-```bash
-kubectl create secret generic keycloak-admin-secret -n team1 \
-  --from-literal=KEYCLOAK_ADMIN_USERNAME=admin \
-  --from-literal=KEYCLOAK_ADMIN_PASSWORD=admin \
-  --dry-run=client -o yaml | kubectl apply -f -
-```
-
-Then apply the demo-specific ConfigMaps — the `authproxy-routes` ConfigMap
+Apply the demo-specific ConfigMaps — the `authproxy-routes` ConfigMap
 configures per-route token exchange (target audience and scopes for the
 `github-tool` host), and `authbridge-config` sets the agent's SPIFFE ID for
 inbound audience validation:
@@ -448,9 +449,19 @@ UI and manual deployments).
 
 ---
 
-## Step 7: Verify Ollama is Running
+## Step 7: Verify LLM Provider
 
-The agent uses an LLM for inference. If using Ollama, verify it is running:
+The agent uses an LLM for inference. Follow the section that matches your chosen
+provider.
+
+> **Recommendation:** OpenAI (`gpt-4o-mini` or similar) is recommended for the most
+> reliable function-calling experience. Local Ollama models may produce text-based
+> tool outputs instead of structured function calls with `crewai 1.10.1`
+> ([kagenti/agent-examples#173](https://github.com/kagenti/agent-examples/issues/173)).
+
+### Option A: Ollama (local models)
+
+Verify Ollama is running:
 
 ```bash
 ollama list
@@ -467,6 +478,62 @@ model is pulled (`ollama pull ibm/granite4:latest`).
 > kubectl set env deployment/git-issue-agent -n team1 -c agent \
 >   LLM_API_BASE="http://ollama.ollama.svc:11434"
 > ```
+
+#### Known Issue: Ollama Port Exclusion
+
+AuthBridge's `proxy-init` init container sets up iptables rules to redirect
+traffic through Envoy. By default, only port 8080 is excluded from redirection.
+Ollama traffic on port 11434 is intercepted by Envoy, which corrupts the LLM's
+streaming response and causes function calling failures.
+
+**Workaround:** After deploying the agent, exclude Ollama's port from Envoy
+interception by appending an init container that runs after `proxy-init`:
+
+```bash
+kubectl patch deployment git-issue-agent -n team1 --type=json -p='[
+  {"op":"add","path":"/spec/template/spec/initContainers/-","value":
+    {
+      "name":"fix-iptables",
+      "image":"alpine:3.19",
+      "command":["sh","-c","apk add --no-cache iptables && iptables -t nat -I OUTPUT -p tcp --dport 11434 -j RETURN"],
+      "securityContext":{"capabilities":{"add":["NET_ADMIN"]},"runAsUser":0}
+    }
+  }
+]'
+kubectl rollout status deployment/git-issue-agent -n team1 --timeout=120s
+```
+
+This is tracked in
+[kagenti-extensions#235](https://github.com/kagenti/kagenti-extensions/issues/235)
+and will be resolved when `OUTBOUND_PORTS_EXCLUDE` becomes configurable via
+annotation or ConfigMap.
+
+### Option B: OpenAI
+
+Verify the OpenAI secret exists (see the prerequisite note in
+[Step 5](#step-5-import-the-github-issue-agent-via-kagenti-ui)):
+
+```bash
+kubectl get secret openai-secret -n team1
+```
+
+Verify the agent has the correct environment variables:
+
+```bash
+kubectl exec deployment/git-issue-agent -n team1 -c agent -- env | grep -E "LLM_|OPENAI"
+```
+
+Expected:
+
+```
+LLM_API_BASE=https://api.openai.com/v1
+LLM_MODEL=gpt-4o-mini-2024-07-18
+LLM_API_KEY=sk-...
+OPENAI_API_KEY=sk-...
+```
+
+> **Note:** OpenAI uses HTTPS, which AuthBridge passes through via TLS passthrough.
+> No Ollama port exclusion workaround is needed.
 
 ---
 
@@ -709,6 +776,13 @@ Inside the test-client pod, get the agent's client credentials (needed to reques
 user tokens that include the agent's audience):
 
 ```bash
+# Helper: decode a JWT payload (base64url → JSON)
+jwt_payload() {
+  local p=$(echo "$1" | cut -d. -f2 | tr '_-' '/+')
+  case $((${#p} % 4)) in 2) p="${p}==" ;; 3) p="${p}=" ;; esac
+  echo "$p" | base64 -d
+}
+
 ADMIN_TOKEN=$(curl -s http://keycloak-service.keycloak.svc:8080/realms/kagenti/protocol/openid-connect/token \
   -d "grant_type=password" \
   -d "client_id=admin-cli" \
@@ -740,7 +814,7 @@ ALICE_TOKEN=$(curl -s -X POST \
   --data-urlencode "client_secret=$CLIENT_SECRET" | jq -r ".access_token")
 
 echo "Alice token length: ${#ALICE_TOKEN}"
-echo "Alice scopes: $(echo $ALICE_TOKEN | cut -d. -f2 | base64 -d 2>/dev/null | jq -r '.scope')"
+echo "Alice scopes: $(jwt_payload $ALICE_TOKEN | jq -r '.scope')"
 ```
 
 **Alice queries a public repo** (should succeed):
@@ -804,7 +878,7 @@ BOB_TOKEN=$(curl -s -X POST \
   --data-urlencode "client_secret=$CLIENT_SECRET" | jq -r ".access_token")
 
 echo "Bob token length: ${#BOB_TOKEN}"
-echo "Bob scopes: $(echo $BOB_TOKEN | cut -d. -f2 | base64 -d 2>/dev/null | jq -r '.scope')"
+echo "Bob scopes: $(jwt_payload $BOB_TOKEN | jq -r '.scope')"
 ```
 
 **Bob queries the same private repo** (should succeed — PRIVILEGED_ACCESS_PAT has access):
