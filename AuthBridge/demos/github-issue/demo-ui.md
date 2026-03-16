@@ -120,7 +120,9 @@ You should also have:
 - The [kagenti-extensions](https://github.com/kagenti/kagenti-extensions) repo cloned
 - The Kagenti UI running at `http://kagenti-ui.localtest.me:8080`
 - Python 3.9+ with `venv` support
-- **Ollama running** with the `ibm/granite4:latest` model (or another model of your choice)
+- An LLM provider — either **Ollama** with `ibm/granite4:latest` (or another model)
+  or an **OpenAI API key** (recommended for reliable function calling;
+  see [agent-examples#173](https://github.com/kagenti/agent-examples/issues/173))
 - Two GitHub Personal Access Tokens (PATs):
   - `<PUBLIC_ACCESS_PAT>` — access to public repositories only
   - `<PRIVILEGED_ACCESS_PAT>` — access to all repositories
@@ -447,9 +449,19 @@ UI and manual deployments).
 
 ---
 
-## Step 7: Verify Ollama is Running
+## Step 7: Verify LLM Provider
 
-The agent uses an LLM for inference. If using Ollama, verify it is running:
+The agent uses an LLM for inference. Follow the section that matches your chosen
+provider.
+
+> **Recommendation:** OpenAI (`gpt-4o-mini` or similar) is recommended for the most
+> reliable function-calling experience. Local Ollama models may produce text-based
+> tool outputs instead of structured function calls with `crewai 1.10.1`
+> ([kagenti/agent-examples#173](https://github.com/kagenti/agent-examples/issues/173)).
+
+### Option A: Ollama (local models)
+
+Verify Ollama is running:
 
 ```bash
 ollama list
@@ -466,6 +478,61 @@ model is pulled (`ollama pull ibm/granite4:latest`).
 > kubectl set env deployment/git-issue-agent -n team1 -c agent \
 >   LLM_API_BASE="http://ollama.ollama.svc:11434"
 > ```
+
+#### Known Issue: Ollama Port Exclusion
+
+AuthBridge's `proxy-init` init container sets up iptables rules to redirect
+traffic through Envoy. By default, only port 8080 is excluded from redirection.
+Ollama traffic on port 11434 is intercepted by Envoy, which corrupts the LLM's
+streaming response and causes function calling failures.
+
+**Workaround:** After deploying the agent, exclude Ollama's port from Envoy
+interception by adding an init container that runs before `proxy-init`:
+
+```bash
+kubectl patch deployment git-issue-agent -n team1 --type=json -p='[
+  {"op":"add","path":"/spec/template/spec/initContainers","value":[
+    {
+      "name":"fix-iptables",
+      "image":"alpine:3.19",
+      "command":["sh","-c","apk add --no-cache iptables && iptables -t nat -I OUTPUT -p tcp --dport 11434 -j RETURN"],
+      "securityContext":{"capabilities":{"add":["NET_ADMIN"]},"runAsUser":0}
+    }
+  ]}
+]'
+kubectl rollout status deployment/git-issue-agent -n team1 --timeout=120s
+```
+
+This is tracked in
+[kagenti-extensions#235](https://github.com/kagenti/kagenti-extensions/issues/235)
+and will be resolved when `OUTBOUND_PORTS_EXCLUDE` becomes configurable via
+annotation or ConfigMap.
+
+### Option B: OpenAI
+
+Verify the OpenAI secret was created (Step 5, item 11):
+
+```bash
+kubectl get secret openai-secret -n team1
+```
+
+Verify the agent has the correct environment variables:
+
+```bash
+kubectl exec deployment/git-issue-agent -n team1 -c agent -- env | grep -E "LLM_|OPENAI"
+```
+
+Expected:
+
+```
+LLM_API_BASE=https://api.openai.com/v1
+LLM_MODEL=gpt-4o-mini-2024-07-18
+LLM_API_KEY=sk-...
+OPENAI_API_KEY=sk-...
+```
+
+> **Note:** OpenAI uses HTTPS, which AuthBridge passes through via TLS passthrough.
+> No Ollama port exclusion workaround is needed.
 
 ---
 
