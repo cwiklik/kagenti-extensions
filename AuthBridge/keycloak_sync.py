@@ -440,7 +440,7 @@ def main():
     )
     parser.add_argument(
         "--realm",
-        default="demo",
+        default="kagenti",
         help="Keycloak realm (default: demo)"
     )
     parser.add_argument(

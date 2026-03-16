@@ -19,7 +19,7 @@ metadata:
   namespace: team1
 data:
   KEYCLOAK_URL: "http://keycloak-service.keycloak.svc:8080"
-  KEYCLOAK_REALM: "demo"
+  KEYCLOAK_REALM: "kagenti"
   # TOKEN_URL: Optional. Auto-derived from KEYCLOAK_URL + KEYCLOAK_REALM if not set.
   # TOKEN_URL: "http://keycloak-service.keycloak.svc:8080/realms/demo/protocol/openid-connect/token"
   # ISSUER: Set explicitly when the internal KEYCLOAK_URL differs from the frontend URL

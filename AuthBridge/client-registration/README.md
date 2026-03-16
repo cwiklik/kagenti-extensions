@@ -126,7 +126,7 @@ sequenceDiagram
 | `SPIRE_ENABLED` | No | Enable SPIFFE ID extraction (default: `false`) | `true` |
 | `CLIENT_NAME` | Yes | Friendly name for the client | `my-service` |
 | `KEYCLOAK_URL` | Yes | Keycloak server URL | `http://keycloak:8080` |
-| `KEYCLOAK_REALM` | Yes | Keycloak realm name | `demo` |
+| `KEYCLOAK_REALM` | Yes | Keycloak realm name | `kagenti` |
 | `KEYCLOAK_ADMIN_USERNAME` | Yes | Admin username | `admin` |
 | `KEYCLOAK_ADMIN_PASSWORD` | Yes | Admin password | `admin` |
 | `KEYCLOAK_TOKEN_EXCHANGE_ENABLED` | No | Enable token exchange for client (default: `true`) | `true` |
@@ -255,7 +255,7 @@ CLIENT_SECRET=$(cat /shared/client-secret.txt)
 CLIENT_ID="spiffe://localtest.me/ns/default/sa/my-service-account"
 
 # Get a token from Keycloak
-curl -X POST http://keycloak:8080/realms/demo/protocol/openid-connect/token \
+curl -X POST http://keycloak:8080/realms/kagenti/protocol/openid-connect/token \
   -d "grant_type=client_credentials" \
   -d "client_id=$CLIENT_ID" \
   -d "client_secret=$CLIENT_SECRET"
