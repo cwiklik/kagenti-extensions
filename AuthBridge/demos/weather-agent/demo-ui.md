@@ -97,7 +97,11 @@ including the Kagenti UI.
 You should also have:
 - The [kagenti-extensions](https://github.com/kagenti/kagenti-extensions) repo cloned
 - The Kagenti UI running at `http://kagenti-ui.localtest.me:8080`
-- **Ollama running** with the `ibm/granite4:latest` model (or another model of your choice)
+- An LLM provider — either:
+  - **Ollama** running locally with a model (e.g. `llama3.2:3b-instruct-fp16`), or
+  - **OpenAI API key** (recommended for most reliable results; see
+    [agent-examples#173](https://github.com/kagenti/agent-examples/issues/173) for
+    known Ollama + crewai compatibility issues)
 
 No GitHub tokens or additional secrets are required for this demo.
 
@@ -310,17 +314,50 @@ The agent uses an LLM for inference. If using Ollama, verify it is running:
 ollama list
 ```
 
-You should see `ibm/granite4:latest` (or whichever model you configured) on the list.
-If Ollama is not running, start it in a separate terminal (`ollama serve`) and ensure the
-model is pulled (`ollama pull ibm/granite4:latest`).
+You should see `llama3.2:3b-instruct-fp16` (or whichever model you configured) on
+the list. If Ollama is not running, start it in a separate terminal (`ollama serve`)
+and ensure the model is pulled (`ollama pull llama3.2:3b-instruct-fp16`).
 
-> **Note:** The `.env.ollama` file defaults to `LLM_API_BASE=http://host.docker.internal:11434`,
+> **Note:** The `.env.ollama` file defaults to `LLM_API_BASE=http://host.docker.internal:11434/v1`,
 > which reaches Ollama running on your host machine via the Kind/Docker Desktop gateway.
 > If you deploy Ollama inside the cluster instead, patch the agent:
 > ```bash
 > kubectl set env deployment/weather-service -n team1 -c agent \
->   LLM_API_BASE="http://ollama.ollama.svc:11434"
+>   LLM_API_BASE="http://ollama.ollama.svc:11434/v1"
 > ```
+
+### Known Issue: Ollama Port Exclusion
+
+AuthBridge's `proxy-init` init container sets up iptables rules to redirect
+traffic through Envoy. By default, only port 8080 is excluded from redirection.
+Ollama traffic on port 11434 is intercepted by Envoy, which corrupts the LLM's
+streaming response and causes function calling failures.
+
+**Workaround:** After deploying the agent, exclude Ollama's port from Envoy
+interception by adding an init container that runs after `proxy-init`:
+
+```bash
+kubectl patch deployment weather-service -n team1 --type=json -p='[
+  {"op":"add","path":"/spec/template/spec/initContainers","value":[
+    {
+      "name":"fix-iptables",
+      "image":"alpine:3.19",
+      "command":["sh","-c","apk add --no-cache iptables && iptables -t nat -I OUTPUT -p tcp --dport 11434 -j RETURN"],
+      "securityContext":{"capabilities":{"add":["NET_ADMIN"]},"runAsUser":0}
+    }
+  ]}
+]'
+kubectl rollout status deployment/weather-service -n team1 --timeout=120s
+```
+
+This is tracked in
+[kagenti-extensions#235](https://github.com/kagenti/kagenti-extensions/issues/235)
+and will be resolved when `OUTBOUND_PORTS_EXCLUDE` becomes configurable via
+annotation or ConfigMap.
+
+> **OpenAI users:** If using OpenAI (`LLM_API_BASE=https://api.openai.com/v1`),
+> this workaround is **not needed** — HTTPS traffic uses TLS passthrough and is
+> not intercepted by Envoy.
 
 ---
 
