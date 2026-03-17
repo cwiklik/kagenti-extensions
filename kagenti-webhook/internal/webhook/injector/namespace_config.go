@@ -28,7 +28,6 @@ var nsConfigLog = logf.Log.WithName("namespace-config")
 
 // Well-known ConfigMap/Secret names in the target namespace.
 const (
-	EnvironmentsConfigMapName    = "environments"
 	AuthBridgeConfigMapName      = "authbridge-config"
 	KeycloakAdminSecretName      = "keycloak-admin-secret"
 	SpiffeHelperConfigMapName    = "spiffe-helper-config"
@@ -38,13 +37,11 @@ const (
 
 // NamespaceConfig holds resolved values from namespace ConfigMaps/Secrets.
 type NamespaceConfig struct {
-	// From "environments" ConfigMap
-	KeycloakURL       string
-	KeycloakRealm     string
-	SpireEnabled      string
-	PlatformClientIDs string
-
 	// From "authbridge-config" ConfigMap
+	KeycloakURL           string
+	KeycloakRealm         string
+	SpireEnabled          string
+	PlatformClientIDs     string
 	TokenURL              string
 	Issuer                string
 	ExpectedAudience      string
@@ -68,20 +65,14 @@ type NamespaceConfig struct {
 func ReadNamespaceConfig(ctx context.Context, c client.Reader, namespace string) (*NamespaceConfig, error) {
 	cfg := &NamespaceConfig{}
 
-	// Read "environments" ConfigMap
-	if cm, err := getConfigMap(ctx, c, namespace, EnvironmentsConfigMapName); err != nil {
-		nsConfigLog.V(1).Info("ConfigMap not found", "name", EnvironmentsConfigMapName, "namespace", namespace, "error", err)
+	// Read "authbridge-config" ConfigMap (all identity + token exchange settings)
+	if cm, err := getConfigMap(ctx, c, namespace, AuthBridgeConfigMapName); err != nil {
+		nsConfigLog.V(1).Info("ConfigMap not found", "name", AuthBridgeConfigMapName, "namespace", namespace, "error", err)
 	} else {
 		cfg.KeycloakURL = cm.Data["KEYCLOAK_URL"]
 		cfg.KeycloakRealm = cm.Data["KEYCLOAK_REALM"]
 		cfg.SpireEnabled = cm.Data["SPIRE_ENABLED"]
 		cfg.PlatformClientIDs = cm.Data["PLATFORM_CLIENT_IDS"]
-	}
-
-	// Read "authbridge-config" ConfigMap
-	if cm, err := getConfigMap(ctx, c, namespace, AuthBridgeConfigMapName); err != nil {
-		nsConfigLog.V(1).Info("ConfigMap not found", "name", AuthBridgeConfigMapName, "namespace", namespace, "error", err)
-	} else {
 		cfg.TokenURL = cm.Data["TOKEN_URL"]
 		cfg.Issuer = cm.Data["ISSUER"]
 		cfg.ExpectedAudience = cm.Data["EXPECTED_AUDIENCE"]

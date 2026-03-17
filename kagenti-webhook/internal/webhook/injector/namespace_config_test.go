@@ -34,18 +34,13 @@ func newFakeReader(objs ...client.Object) client.Reader {
 }
 
 func TestReadNamespaceConfig_AllPresent(t *testing.T) {
-	envCM := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{Name: EnvironmentsConfigMapName, Namespace: "ns1"},
-		Data: map[string]string{
-			"KEYCLOAK_URL":        "http://keycloak:8080",
-			"KEYCLOAK_REALM":      "demo",
-			"SPIRE_ENABLED":       "true",
-			"PLATFORM_CLIENT_IDS": "id1,id2",
-		},
-	}
 	abCM := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{Name: AuthBridgeConfigMapName, Namespace: "ns1"},
 		Data: map[string]string{
+			"KEYCLOAK_URL":            "http://keycloak:8080",
+			"KEYCLOAK_REALM":          "demo",
+			"SPIRE_ENABLED":           "true",
+			"PLATFORM_CLIENT_IDS":     "id1,id2",
 			"TOKEN_URL":               "http://keycloak:8080/realms/demo/protocol/openid-connect/token",
 			"ISSUER":                  "http://keycloak:8080/realms/demo",
 			"EXPECTED_AUDIENCE":       "my-audience",
@@ -67,7 +62,7 @@ func TestReadNamespaceConfig_AllPresent(t *testing.T) {
 		Data:       map[string]string{"routes.yaml": "routes: []"},
 	}
 
-	reader := newFakeReader(envCM, abCM, spiffeCM, envoyCM, routesCM)
+	reader := newFakeReader(abCM, spiffeCM, envoyCM, routesCM)
 	cfg, err := ReadNamespaceConfig(context.Background(), reader, "ns1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -115,16 +110,16 @@ func TestReadNamespaceConfig_EmptyNamespace(t *testing.T) {
 }
 
 func TestReadNamespaceConfig_PartialConfig(t *testing.T) {
-	// Only environments ConfigMap exists
-	envCM := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{Name: EnvironmentsConfigMapName, Namespace: "ns1"},
+	// Only authbridge-config with subset of keys
+	abCM := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: AuthBridgeConfigMapName, Namespace: "ns1"},
 		Data: map[string]string{
 			"KEYCLOAK_URL":   "http://keycloak:8080",
 			"KEYCLOAK_REALM": "demo",
 		},
 	}
 
-	reader := newFakeReader(envCM)
+	reader := newFakeReader(abCM)
 	cfg, err := ReadNamespaceConfig(context.Background(), reader, "ns1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
