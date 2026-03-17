@@ -441,7 +441,7 @@ def main():
     parser.add_argument(
         "--realm",
         default="kagenti",
-        help="Keycloak realm (default: demo)"
+        help="Keycloak realm (default: kagenti)"
     )
     parser.add_argument(
         "--admin-user",

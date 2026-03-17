@@ -5,7 +5,11 @@ set -e
 # This script builds all necessary images locally and loads them into Kind
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-KAGENTI_DIR="/Users/alan/Documents/Work/kagenti"
+KAGENTI_DIR="${KAGENTI_DIR:-$(cd "$SCRIPT_DIR/../kagenti" 2>/dev/null && pwd || echo "")}"
+if [ -z "$KAGENTI_DIR" ] || [ ! -d "$KAGENTI_DIR" ]; then
+    echo "ERROR: Set KAGENTI_DIR to point to your kagenti repo clone"
+    exit 1
+fi
 CLUSTER_NAME="${CLUSTER_NAME:-kagenti-dev}"
 
 # Auto-detect container runtime (Podman or Docker)
@@ -62,7 +66,7 @@ load_image_to_kind ghcr.io/kagenti/kagenti/spiffe-idp-setup:local
 echo "✅ Built and loaded: spiffe-idp-setup:local"
 echo ""
 
-# Build client-registration (CHANGED - UID 1337)
+# Build client-registration (CHANGED - UID 1000)
 echo "=========================================="
 echo "Building client-registration"
 echo "=========================================="
@@ -82,7 +86,7 @@ load_image_to_kind ghcr.io/kagenti/kagenti-extensions/kagenti-webhook:local
 echo "✅ Built and loaded: kagenti-webhook:local"
 echo ""
 
-# Build envoy-with-processor (verify UID 1337)
+# Build envoy-with-processor (Envoy runs as UID 1337)
 echo "=========================================="
 echo "Building envoy-with-processor"
 echo "=========================================="
