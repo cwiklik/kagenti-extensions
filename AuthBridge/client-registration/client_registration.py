@@ -77,7 +77,7 @@ def register_client(keycloak_admin: KeycloakAdmin, client_id: str, client_payloa
         print(f'Created Keycloak client "{client_id}": {internal_client_id}')
         return internal_client_id
     except KeycloakPostError as e:
-        if "409" in str(e):
+        if getattr(e, "response_code", None) == 409:
             # Client exists but get_client_id missed it (URL encoding issue
             # with SPIFFE IDs containing ://).  Search all clients instead.
             print(f'Client "{client_id}" already exists (409). Looking up by listing all clients...')

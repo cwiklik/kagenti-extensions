@@ -67,6 +67,10 @@ func (c *actorTokenCache) getActorToken(clientID, clientSecret, tokenURL string)
 		return "", fmt.Errorf("failed to obtain actor token: %w", err)
 	}
 
+	if expiresIn < 60 {
+		expiresIn = 60
+	}
+
 	c.mu.Lock()
 	c.token = token
 	c.expiresAt = time.Now().Add(time.Duration(expiresIn) * time.Second)
@@ -584,7 +588,10 @@ func (p *processor) handleOutbound(ctx context.Context, headers *core.HeaderMap)
 		// Obtain actor token for act claim chaining (RFC 8693 Section 4.1)
 		var actorToken string
 		if actorTokenEnabled {
-			actorToken, _ = globalActorCache.getActorToken(clientID, clientSecret, tokenURL)
+			actorToken, err = globalActorCache.getActorToken(clientID, clientSecret, tokenURL)
+			if err != nil {
+				log.Printf("[Actor Token] WARNING: failed to obtain actor token: %v, proceeding without", err)
+			}
 		}
 
 		authHeader := getHeaderValue(headers.Headers, "authorization")
