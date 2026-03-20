@@ -270,6 +270,8 @@ spec:
         - name: certs
           mountPath: /opt
           readOnly: true
+        - name: shared-data
+          mountPath: /shared
       - name: tools
         image: curlimages/curl
         command: ["sleep", "infinity"]
@@ -280,6 +282,9 @@ spec:
         - name: certs
           mountPath: /opt
           readOnly: true
+        - name: shared-data
+          mountPath: /shared
+          readOnly: true
       volumes:
       - name: spiffe-helper-config
         configMap:
@@ -289,6 +294,8 @@ spec:
           driver: csi.spiffe.io
           readOnly: true
       - name: certs
+        emptyDir: {}
+      - name: shared-data
         emptyDir: {}
 EOF
 
