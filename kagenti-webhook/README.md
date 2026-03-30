@@ -121,15 +121,17 @@ labels:
 
 ### Per-Sidecar Workload Labels
 
-Individual sidecars can be disabled per-workload using these labels on the pod template. Setting a label to `"false"` opts that workload out of the corresponding sidecar.
+Envoy and spiffe-helper: set the label to `"false"` on the pod template to opt out of that sidecar.
+
+Client-registration: **default** is operator-managed (no legacy `kagenti-client-registration` sidecar). Set **`kagenti.io/client-registration-inject: "true"`** to opt **in** to the legacy in-pod registration sidecar (or combined authbridge registration slice).
 
 | Label | Controls |
 | --- | --- |
 | `kagenti.io/envoy-proxy-inject: "false"` | Disables envoy-proxy (and proxy-init) |
 | `kagenti.io/spiffe-helper-inject: "false"` | Disables spiffe-helper (and SPIRE volumes/SA) |
-| `kagenti.io/client-registration-inject: "false"` | Disables client-registration |
+| `kagenti.io/client-registration-inject: "true"` | Enables legacy client-registration sidecar (operator skips Keycloak registration for this workload) |
 
-Example — inject envoy and spiffe-helper, but not client-registration:
+Example — legacy client-registration sidecar enabled:
 
 ```yaml
 apiVersion: apps/v1
@@ -142,7 +144,7 @@ spec:
     metadata:
       labels:
         kagenti.io/type: agent
-        kagenti.io/client-registration-inject: "false"
+        kagenti.io/client-registration-inject: "true"
     spec:
       containers:
       - name: app

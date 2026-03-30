@@ -176,7 +176,8 @@ The webhook watches this ConfigMap for changes and reloads automatically. New po
 When `combinedSidecar: true`, the per-sidecar feature gates and workload labels still work:
 
 - **`spiffeHelper: false`** or `kagenti.io/spiffe-helper-inject: "false"`: The combined container starts with `SPIRE_ENABLED=false` — spiffe-helper is not launched, and a static client ID is used instead.
-- **`clientRegistration: false`** or `kagenti.io/client-registration-inject: "false"`: The combined container starts with `CLIENT_REGISTRATION_ENABLED=false` — client registration is skipped.
+- **`clientRegistration: false`**: The combined container starts with `CLIENT_REGISTRATION_ENABLED=false` — client registration is skipped.
+- **Default** (label not `true`): operator-managed registration; combined authbridge uses `CLIENT_REGISTRATION_ENABLED=false` unless **`kagenti.io/client-registration-inject: "true"`** opts in to the legacy registration slice.
 - **`envoyProxy: false`** or `kagenti.io/envoy-proxy-inject: "false"`: No combined container is injected at all (the proxy is the core component).
 
 Then continue with:
