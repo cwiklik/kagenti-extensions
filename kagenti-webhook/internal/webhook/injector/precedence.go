@@ -9,7 +9,9 @@ import (
 //
 // Precedence order (highest to lowest):
 //  1. Per-sidecar feature gate (featureGates.<sidecar>=false disables cluster-wide)
-//  2. Workload label (kagenti.io/<sidecar>-inject=false) — per-sidecar opt-out
+//  2. Workload label — envoy-proxy and spiffe-helper: kagenti.io/<sidecar>-inject=false opts out.
+//     client-registration: kagenti.io/client-registration-inject=true opts **in** to the legacy
+//     sidecar/combined slice; default is operator-managed registration (no legacy injection).
 //
 // Global and workload-level pre-filtering (globalEnabled kill switch, type check,
 // injectTools gate, kagenti.io/inject=disabled opt-out) is handled upstream in
@@ -46,9 +48,7 @@ func (e *PrecedenceEvaluator) Evaluate(
 			e.featureGates.SpiffeHelper,
 			workloadLabels[LabelSpiffeHelperInject],
 		),
-		ClientRegistration: e.evaluateSidecar(
-			"client-registration",
-			e.featureGates.ClientRegistration,
+		ClientRegistration: e.evaluateClientRegistration(
 			workloadLabels[LabelClientRegistrationInject],
 		),
 	}
@@ -61,6 +61,32 @@ func (e *PrecedenceEvaluator) Evaluate(
 	}
 
 	return decision
+}
+
+// evaluateClientRegistration applies feature gate then opt-in label semantics: the legacy
+// client-registration sidecar (or combined authbridge registration slice) injects only when
+// kagenti.io/client-registration-inject is exactly "true". Otherwise kagenti-operator is
+// expected to register the client and supply credentials via pod template annotation.
+func (e *PrecedenceEvaluator) evaluateClientRegistration(workloadLabelValue string) SidecarDecision {
+	if !e.featureGates.ClientRegistration {
+		return SidecarDecision{
+			Inject: false,
+			Reason: "client-registration feature gate disabled",
+			Layer:  "feature-gate",
+		}
+	}
+	if workloadLabelValue == "true" {
+		return SidecarDecision{
+			Inject: true,
+			Reason: "workload opted in to legacy client-registration (kagenti.io/client-registration-inject=true)",
+			Layer:  "workload-label",
+		}
+	}
+	return SidecarDecision{
+		Inject: false,
+		Reason: "operator-managed client registration is default; set kagenti.io/client-registration-inject=true for legacy sidecar",
+		Layer:  "default",
+	}
 }
 
 // evaluateSidecar evaluates the two-layer precedence chain for a single sidecar.

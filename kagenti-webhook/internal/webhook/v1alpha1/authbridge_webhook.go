@@ -56,7 +56,7 @@ func SetupAuthBridgeWebhookWithManager(mgr ctrl.Manager, mutator *injector.PodMu
 //
 //nolint:gocritic // hugeParam: admission.Handler interface requires value receiver for admission.Request
 func (w *AuthBridgeWebhook) Handle(ctx context.Context, req admission.Request) admission.Response {
-	authbridgelog.Info("AuthBridge webhook called",
+	authbridgelog.Info("AuthBridge webhook: admission request",
 		"kind", req.Kind.Kind,
 		"namespace", req.Namespace,
 		"name", req.Name,
@@ -83,9 +83,34 @@ func (w *AuthBridgeWebhook) Handle(ctx context.Context, req admission.Request) a
 	// but GenerateName is set by the owning controller (e.g. "myapp-7d4f8b9c5-").
 	resourceName := deriveWorkloadName(&pod)
 
+	keycloakClientCredentialsSecret := strings.TrimSpace(pod.Annotations[injector.AnnotationKeycloakClientSecretName])
+	alreadyInjected := w.isAlreadyInjected(&pod.Spec)
+	authbridgelog.Info("AuthBridge webhook: Pod admission details",
+		"namespace", req.Namespace,
+		"workloadKey", resourceName,
+		"kagentiType", pod.Labels[injector.KagentiTypeLabel],
+		"keycloakClientCredentialsSecretName", keycloakClientCredentialsSecret,
+		"alreadyInjected", alreadyInjected)
+
 	// Check if already injected (idempotency)
-	if w.isAlreadyInjected(&pod.Spec) {
-		authbridgelog.Info("Skipping - sidecars already injected",
+	if alreadyInjected {
+		// Reinvocation / upgrade: sidecars exist but operator-managed registration Secret mounts may
+		// still be missing (annotation added after first injection pass).
+		if injector.NeedsKeycloakClientCredentialsVolumePatch(&pod.Spec, pod.Annotations) {
+			injector.ApplyKeycloakClientCredentialsSecretVolumes(&pod.Spec, pod.Annotations)
+			marshaledMutated, err := json.Marshal(&pod)
+			if err != nil {
+				authbridgelog.Error(err, "Failed to marshal Pod for operator client-reg volumes")
+				return admission.Errored(http.StatusInternalServerError, err)
+			}
+			authbridgelog.V(1).Info("Applied operator client-reg Secret mounts on already-injected Pod (reinvocation)",
+				"namespace", req.Namespace,
+				"workloadKey", resourceName,
+				"secretName", keycloakClientCredentialsSecret,
+				"path", "operator-secret-only")
+			return admission.PatchResponseFromRaw(req.Object.Raw, marshaledMutated)
+		}
+		authbridgelog.V(1).Info("Skipping - sidecars already injected",
 			"namespace", req.Namespace,
 			"name", resourceName)
 		return admission.Allowed("already injected")

@@ -51,7 +51,7 @@ Each sidecar independently passes through a two-layer chain:
 **Injected by default, per-sidecar opt-out available:**
 
 - `spiffe-helper` (sidecar) -- obtains JWT-SVIDs from SPIRE agent. Opt out with `kagenti.io/spiffe-helper-inject: "false"` or `featureGates.spiffeHelper: false`.
-- `kagenti-client-registration` (sidecar) -- registers with Keycloak via SPIFFE identity. Opt out with `kagenti.io/client-registration-inject: "false"` or `featureGates.clientRegistration: false`.
+- `kagenti-client-registration` (sidecar) -- registers with Keycloak via SPIFFE identity. Opt **in** with `kagenti.io/client-registration-inject: "true"`; default is operator-managed. Disable cluster-wide with `featureGates.clientRegistration: false`.
 
 #### Combined mode (`featureGates.combinedSidecar: true`)
 

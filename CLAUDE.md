@@ -48,7 +48,7 @@ A Kubernetes **mutating admission webhook** that intercepts workload creation (D
 
 **Key facts:**
 - Webhook: **AuthBridge** at `/mutate-workloads-authbridge`
-- Injection controlled via pod labels (`kagenti.io/type`, `kagenti.io/inject`) and per-sidecar opt-out labels (`kagenti.io/envoy-proxy-inject`, `kagenti.io/spiffe-helper-inject`, `kagenti.io/client-registration-inject`)
+- Injection controlled via pod labels (`kagenti.io/type`, `kagenti.io/inject`), per-sidecar opt-out labels for envoy/spiffe (`kagenti.io/envoy-proxy-inject`, `kagenti.io/spiffe-helper-inject`), and **opt-in** `kagenti.io/client-registration-inject=true` for the legacy client-registration sidecar (default: operator-managed)
 - Shared `PodMutator` instance (in `internal/webhook/injector/`)
 - Injects: `proxy-init` (init), `envoy-proxy`, `spiffe-helper`, `kagenti-client-registration` — all opt-out via workload labels or feature gates. When `featureGates.combinedSidecar=true`, sidecars are merged into a single `authbridge` container.
 - Build: `cd kagenti-webhook && make build` / `make test` / `make docker-build`

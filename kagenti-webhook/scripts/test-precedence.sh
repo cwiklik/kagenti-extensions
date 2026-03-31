@@ -388,7 +388,7 @@ fi
 # ── Test 2: Baseline — All Sidecars ─────────────────────────────────
 
 separator
-log "Test 2: Baseline — all sidecars injected by default (no SPIRE label needed)"
+log "Test 2: Baseline — envoy + spiffe injected; legacy client-registration sidecar is opt-in"
 
 deploy t2-baseline
 
@@ -398,7 +398,7 @@ CONT=$(get_containers t2-baseline)
 assert_has     "Test 2" "${PROXY_INIT}"  "${INIT}"
 assert_has     "Test 2" "${ENVOY}"       "${CONT}"
 assert_has     "Test 2" "${SPIFFE}"      "${CONT}"
-assert_has     "Test 2" "${CLIENT_REG}"  "${CONT}"
+assert_missing "Test 2" "${CLIENT_REG}"  "${CONT}"
 
 # ── Test 3: Disable Envoy Feature Gate ───────────────────────────────
 
@@ -413,7 +413,7 @@ CONT=$(get_containers t3-no-envoy)
 
 assert_missing "Test 3" "${PROXY_INIT}"  "${INIT}"
 assert_missing "Test 3" "${ENVOY}"       "${CONT}"
-assert_has     "Test 3" "${CLIENT_REG}"  "${CONT}"
+assert_missing "Test 3" "${CLIENT_REG}"  "${CONT}"
 
 reset_feature_gates
 
@@ -430,7 +430,7 @@ CONT=$(get_containers t4-no-spiffe)
 assert_has     "Test 4" "${PROXY_INIT}"  "${INIT}"
 assert_has     "Test 4" "${ENVOY}"       "${CONT}"
 assert_missing "Test 4" "${SPIFFE}"      "${CONT}"
-assert_has     "Test 4" "${CLIENT_REG}"  "${CONT}"
+assert_missing "Test 4" "${CLIENT_REG}"  "${CONT}"
 
 # ── Test 5: Whole-Workload Opt-Out ────────────────────────────────────
 
@@ -534,7 +534,7 @@ T9_CONT=$(get_containers t9-tool-inject)
 assert_has     "Test 9" "${PROXY_INIT}"  "${T9_INIT}"
 assert_has     "Test 9" "${ENVOY}"       "${T9_CONT}"
 assert_has     "Test 9" "${SPIFFE}"      "${T9_CONT}"
-assert_has     "Test 9" "${CLIENT_REG}"  "${T9_CONT}"
+assert_missing "Test 9" "${CLIENT_REG}"  "${T9_CONT}"
 
 reset_feature_gates
 
@@ -552,7 +552,7 @@ T10_CONT=$(get_containers t10-no-spiffe-gate)
 assert_has     "Test 10" "${PROXY_INIT}"  "${T10_INIT}"
 assert_has     "Test 10" "${ENVOY}"       "${T10_CONT}"
 assert_missing "Test 10" "${SPIFFE}"      "${T10_CONT}"
-assert_has     "Test 10" "${CLIENT_REG}"  "${T10_CONT}"
+assert_missing "Test 10" "${CLIENT_REG}"  "${T10_CONT}"
 
 reset_feature_gates
 
@@ -588,22 +588,22 @@ T12_CONT=$(get_containers t12-no-envoy-label)
 assert_missing "Test 12" "${PROXY_INIT}"  "${T12_INIT}"
 assert_missing "Test 12" "${ENVOY}"       "${T12_CONT}"
 assert_has     "Test 12" "${SPIFFE}"      "${T12_CONT}"
-assert_has     "Test 12" "${CLIENT_REG}"  "${T12_CONT}"
+assert_missing "Test 12" "${CLIENT_REG}"  "${T12_CONT}"
 
-# ── Test 13: client-registration workload label opt-out (Stage 2 L2) ─
+# ── Test 13: client-registration legacy sidecar opt-in (Stage 2 L2) ─
 
 separator
-log "Test 13: Stage 2 L2 — workload label opt-out: kagenti.io/client-registration-inject=false"
+log "Test 13: Stage 2 L2 — legacy sidecar opt-in: kagenti.io/client-registration-inject=true"
 
-deploy t13-no-clientreg-label 'kagenti.io/client-registration-inject: "false"'
+deploy t13-legacy-clientreg 'kagenti.io/client-registration-inject: "true"'
 
-T13_INIT=$(get_init_containers t13-no-clientreg-label)
-T13_CONT=$(get_containers t13-no-clientreg-label)
+T13_INIT=$(get_init_containers t13-legacy-clientreg)
+T13_CONT=$(get_containers t13-legacy-clientreg)
 
 assert_has     "Test 13" "${PROXY_INIT}"  "${T13_INIT}"
 assert_has     "Test 13" "${ENVOY}"       "${T13_CONT}"
 assert_has     "Test 13" "${SPIFFE}"      "${T13_CONT}"
-assert_missing "Test 13" "${CLIENT_REG}"  "${T13_CONT}"
+assert_has     "Test 13" "${CLIENT_REG}"  "${T13_CONT}"
 
 # ── Test 14: Decision Logs ────────────────────────────────────────────
 

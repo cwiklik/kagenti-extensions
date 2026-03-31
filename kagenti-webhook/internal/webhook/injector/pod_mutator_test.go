@@ -114,7 +114,7 @@ func TestEnsureServiceAccount_AlreadyExistsNoLabels(t *testing.T) {
 }
 
 func TestInjectAuthBridge_SetsServiceAccountName(t *testing.T) {
-	// Opt-out model: agent workloads are injected by default (no inject label needed).
+	// Agent workloads get envoy/spiffe by default; legacy client-registration sidecar is opt-in.
 	m := newTestMutator()
 	ctx := context.Background()
 

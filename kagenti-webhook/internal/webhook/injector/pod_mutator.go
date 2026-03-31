@@ -19,6 +19,7 @@ package injector
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/kagenti/kagenti-extensions/kagenti-webhook/internal/webhook/config"
 	corev1 "k8s.io/api/core/v1"
@@ -284,6 +285,12 @@ func (m *PodMutator) InjectAuthBridge(ctx context.Context, podSpec *corev1.PodSp
 		}
 	}
 
+	// Operator-managed client registration: mount Keycloak credentials from a Secret named in
+	// annotations (written by kagenti-operator) for all containers using shared-data.
+	ApplyKeycloakClientCredentialsSecretVolumes(podSpec, annotations)
+
+	logClientRegistrationPaths(namespace, crName, labels, currentGates.CombinedSidecar, decision, annotations)
+
 	// Set fsGroup for shared volume access when SPIRE is enabled
 	if spireEnabled {
 		ensureFSGroup(podSpec)
@@ -295,6 +302,41 @@ func (m *PodMutator) InjectAuthBridge(ctx context.Context, podSpec *corev1.PodSp
 		"volumes", len(podSpec.Volumes),
 		"spireEnabled", spireEnabled)
 	return true, nil
+}
+
+// logClientRegistrationPaths records how Keycloak client credentials are delivered for this Pod:
+// Secret mounted from annotation (kagenti-operator), legacy kagenti-client-registration sidecar, or combined authbridge.
+// deliveryPaths is comma-separated short tokens: operator-secret, combined-authbridge, sidecar, skip.
+func logClientRegistrationPaths(namespace, crName string, labels map[string]string, combinedSidecar bool, decision InjectionDecision, annotations map[string]string) {
+	keycloakClientCredentialsSecret := strings.TrimSpace(annotations[AnnotationKeycloakClientSecretName])
+
+	var paths []string
+	if keycloakClientCredentialsSecret != "" {
+		paths = append(paths, "operator-secret")
+	}
+
+	if combinedSidecar {
+		if decision.EnvoyProxy.Inject && decision.ClientRegistration.Inject {
+			paths = append(paths, "combined-authbridge")
+		}
+	} else if decision.ClientRegistration.Inject {
+		paths = append(paths, "sidecar")
+	}
+
+	if len(paths) == 0 {
+		paths = append(paths, "skip")
+	}
+
+	mutatorLog.Info("AuthBridge client registration: how credentials are supplied for this Pod",
+		"namespace", namespace,
+		"workloadKey", crName,
+		"kagentiType", labels[KagentiTypeLabel],
+		"deliveryPaths", strings.Join(paths, ","),
+		"keycloakClientCredentialsSecretName", keycloakClientCredentialsSecret,
+		"combinedSidecarMode", combinedSidecar,
+		"injectClientRegistrationSidecar", decision.ClientRegistration.Inject,
+		"injectEnvoyOrAuthbridge", decision.EnvoyProxy.Inject,
+	)
 }
 
 const managedByLabel = "kagenti.io/managed-by"
