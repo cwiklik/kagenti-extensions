@@ -820,9 +820,29 @@ func main() {
 	// Load configuration from files (or environment variables as fallback)
 	loadConfig()
 
-	// Initialize inbound JWT validation
+	// Derive TOKEN_URL and ISSUER from KEYCLOAK_URL + KEYCLOAK_REALM when not explicitly set.
+	// Explicit values always take precedence (override).
+	// This was originally added in PR #233 but accidentally removed in a later refactor.
 	config := getConfig()
+	keycloakURL := strings.TrimRight(os.Getenv("KEYCLOAK_URL"), "/")
+	keycloakRealm := os.Getenv("KEYCLOAK_REALM")
+
+	if config.TokenURL == "" && keycloakURL != "" && keycloakRealm != "" {
+		derived := keycloakURL + "/realms/" + keycloakRealm + "/protocol/openid-connect/token"
+		globalConfig.mu.Lock()
+		globalConfig.TokenURL = derived
+		globalConfig.mu.Unlock()
+		config = getConfig()
+		log.Printf("[Config] TOKEN_URL derived from KEYCLOAK_URL + KEYCLOAK_REALM: %s", derived)
+	}
+
 	inboundIssuer = os.Getenv("ISSUER")
+	if inboundIssuer == "" && keycloakURL != "" && keycloakRealm != "" {
+		inboundIssuer = keycloakURL + "/realms/" + keycloakRealm
+		log.Printf("[Config] ISSUER derived from KEYCLOAK_URL + KEYCLOAK_REALM: %s", inboundIssuer)
+	}
+
+	// Initialize inbound JWT validation
 	expectedAudience = os.Getenv("EXPECTED_AUDIENCE")
 	if config.TokenURL != "" && inboundIssuer != "" {
 		inboundJWKSURL = deriveJWKSURL(config.TokenURL)
