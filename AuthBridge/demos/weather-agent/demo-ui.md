@@ -566,6 +566,15 @@ creates the correct defaults) and restart the agent:
 kubectl rollout restart deployment/weather-service -n team1
 ```
 
+### Agent card not available in the UI
+
+This demo normally does not create `authproxy-routes`. If the UI still cannot load the
+agent card while the agent container responds on port 8000, Envoy’s ext_proc path is
+likely broken—often due to **invalid `authproxy-routes` YAML** left over from another
+workflow or namespace reuse. Follow **Agent card not available** in the
+[GitHub Issue Agent UI demo](../github-issue/demo-ui.md#agent-card-not-available-in-the-ui)
+(check `envoy-proxy` logs and fix or remove `authproxy-routes` as described there).
+
 ### Agent Pod Not Starting (4/4 containers)
 
 **Symptom:** Pod shows 3/4 or less containers ready

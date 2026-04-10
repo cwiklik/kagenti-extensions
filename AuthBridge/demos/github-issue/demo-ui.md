@@ -108,6 +108,23 @@ This lets you demonstrate finer-grained authorization: a user with full access
 can see issues on all repositories, while a user with partial access can only
 see issues on public repositories.
 
+### Kagenti version notes (UI import and AuthBridge)
+
+- **Outbound routes from the UI (Step 5, item 12):** The API must write `authproxy-routes`
+  `routes.yaml` as a **YAML list** of route objects (same shape as
+  [k8s/configmaps.yaml](k8s/configmaps.yaml)). Older Kagenti backends wrapped routes in a
+  top-level `routes:` **map**, which **AuthProxy go-processor cannot parse**, so ext_proc
+  never starts, Envoy returns **500** through the Service, and the UI shows **Agent card not
+  available**. Use a build that includes [kagenti/kagenti#1194](https://github.com/kagenti/kagenti/pull/1194)
+  ([#1195](https://github.com/kagenti/kagenti/issues/1195)), or use **Step 2 Option B**
+  (`kubectl apply -f demos/github-issue/k8s/configmaps.yaml`) and skip adding duplicate
+  routes in the UI.
+
+- **Finalize after Shipwright:** If the build succeeds but the agent **Deployment never
+  appears** and backend logs show **403** on ConfigMaps, upgrade the Helm chart to a
+  release that includes [kagenti/kagenti#1192](https://github.com/kagenti/kagenti/pull/1192)
+  ([#1191](https://github.com/kagenti/kagenti/issues/1191)).
+
 ---
 
 ## Step 1: Configure Keycloak
@@ -175,7 +192,9 @@ can be configured in two ways:
 
 **Option A (recommended): Via the Kagenti UI** — configure outbound routing
 rules directly during agent import in Step 5 (item 12). No manual ConfigMap
-creation needed.
+creation needed. Requires a Kagenti backend that writes list-shaped `routes.yaml`
+(see [Kagenti version notes](#kagenti-version-notes-ui-import-and-authbridge) above);
+otherwise use Option B or upgrade.
 
 **Option B: Via kubectl** — apply the demo-specific ConfigMap that configures
 per-route token exchange (target audience and scopes for the `github-tool` host):
@@ -334,6 +353,14 @@ kubectl run test-mcp --image=curlimages/curl -n team1 --restart=Never --rm -it -
     > **Note:** This replaces the manual `kubectl apply` of `authproxy-routes`
     > ConfigMap from Step 2. If you already applied the ConfigMap in Step 2,
     > you can skip this — the UI-created routes will merge with existing ones.
+
+    > **Troubleshooting:** If **Outbound Routing Rules** is missing, stays collapsed,
+    > or does not respond when you click it, your Kagenti UI build may not include this
+    > control yet. Use **Step 2, Option B** instead:
+    > `kubectl apply -f demos/github-issue/k8s/configmaps.yaml` from the `AuthBridge`
+    > directory (same host, audience, and scopes as the table above). Then continue
+    > with item 13. Confirm **Enable AuthBridge sidecar injection** (item 8) is still
+    > checked before deploying.
 
 13. **(Ollama only)** If using Ollama, expand **AuthBridge Advanced Configuration**
     and enter `11434` in the **Outbound Ports to Exclude** field.
@@ -899,6 +926,33 @@ kubectl delete pod test-client -n team1 --ignore-not-found
 ---
 
 ## Troubleshooting
+
+### Agent card not available in the UI
+
+**Symptom:** The catalog shows *Agent card not available*; HTTP through the agent
+Service returns **500** (often with `server: envoy`); curling
+`/.well-known/agent-card.json` or `/.well-known/agent.json` from the **agent**
+container on port **8000** still works.
+
+**Cause:** Commonly **go-processor** failed to load `authproxy-routes` (invalid YAML
+shape) and never serves ext_proc, so Envoy cannot complete the request.
+
+**Diagnose:**
+
+```bash
+kubectl logs deployment/git-issue-agent -n team1 -c envoy-proxy 2>&1 | grep -E "failed to load routes|unmarshal"
+kubectl get configmap authproxy-routes -n team1 -o jsonpath='{.data.routes\.yaml}{"\n"}'
+```
+
+If logs mention `cannot unmarshal !!map into []resolver.yamlRoute`, the file should be a
+**list** starting with `- host:` (not a `routes:` map). Match the `routes.yaml` block in
+[k8s/configmaps.yaml](k8s/configmaps.yaml), apply it, then restart:
+
+```bash
+kubectl rollout restart deployment/git-issue-agent -n team1
+```
+
+Longer term, upgrade the Kagenti backend per [kagenti/kagenti#1194](https://github.com/kagenti/kagenti/pull/1194).
 
 ### Invalid Client or Invalid Client Credentials
 
