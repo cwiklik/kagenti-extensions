@@ -8,7 +8,7 @@ updates:
 
   # Go - AuthProxy
   - package-ecosystem: gomod
-    directory: /AuthBridge/AuthProxy
+    directory: /authbridge/authproxy
     schedule:
       interval: weekly
 
@@ -20,30 +20,30 @@ updates:
 
   # Python - client-registration
   - package-ecosystem: pip
-    directory: /AuthBridge/client-registration
+    directory: /authbridge/client-registration
     schedule:
       interval: weekly
 
   # Docker - AuthProxy
   - package-ecosystem: docker
-    directory: /AuthBridge/AuthProxy
+    directory: /authbridge/authproxy
     schedule:
       interval: weekly
 
   # Docker - AuthProxy go-processor
   - package-ecosystem: docker
-    directory: /AuthBridge/AuthProxy/go-processor
+    directory: /authbridge/authproxy/go-processor
     schedule:
       interval: weekly
 
   # Docker - AuthProxy quickstart demo-app
   - package-ecosystem: docker
-    directory: /AuthBridge/AuthProxy/quickstart/demo-app
+    directory: /authbridge/authproxy/quickstart/demo-app
     schedule:
       interval: weekly
 
   # Docker - client-registration
   - package-ecosystem: docker
-    directory: /AuthBridge/client-registration
+    directory: /authbridge/client-registration
     schedule:
       interval: weekly

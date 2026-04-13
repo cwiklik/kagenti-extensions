@@ -249,7 +249,7 @@ sequenceDiagram
 *Note: This step will be replaced by the CI pipeline. The images will be auto-created*
 
 ```bash
-cd AuthBridge/AuthProxy
+cd authbridge/authproxy
 
 # Build all images
 make build-images
@@ -718,6 +718,6 @@ kubectl delete namespace authbridge
 
 ## Next Steps
 
-- See [AuthProxy Documentation](AuthProxy/README.md) for details on token validation and exchange
+- See [AuthProxy Documentation](authproxy/README.md) for details on token validation and exchange
 - See [Client Registration Documentation](client-registration/README.md) for details on automatic Keycloak registration
 - See [README](./README.md) for architecture overview

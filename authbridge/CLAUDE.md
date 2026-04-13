@@ -17,8 +17,8 @@ All of this happens transparently via sidecar injection -- no application code c
 ## Directory Structure
 
 ```
-AuthBridge/
-├── AuthProxy/                        # Envoy + ext-proc sidecar (Go)
+authbridge/
+├── authproxy/                        # Envoy + ext-proc sidecar (Go)
 │   ├── go-processor/main.go          #   gRPC ext-proc: inbound validation + outbound token exchange
 │   ├── init-iptables.sh              #   iptables setup (outbound + inbound, Istio ambient compatible)
 │   ├── Dockerfile.{envoy,init}       #   Container images
@@ -160,10 +160,10 @@ There are **four** setup scripts for different demo scenarios:
 
 | Script | Location | Use Case |
 |--------|----------|----------|
-| `setup_keycloak.py` | `AuthBridge/demos/webhook/` | Webhook-injected deployments (parameterized namespace/SA, creates realm, auth-target client, agent-spiffe-aud + auth-target-aud scopes, alice user) |
-| `setup_keycloak.py` | `AuthBridge/demos/single-target/` | Single-target SPIFFE demo (creates realm, auth-target client, agent-spiffe-aud + auth-target-aud scopes, alice user) |
-| `setup_keycloak.py` | `AuthBridge/demos/github-issue/` | GitHub issue integration demo (creates github-tool client, github-tool-aud + github-full-access scopes, alice + bob users) |
-| `setup_keycloak.py` | `AuthBridge/AuthProxy/quickstart/` | Standalone AuthProxy quickstart without SPIFFE (creates application-caller, authproxy, demoapp clients with per-client scope assignment) |
+| `setup_keycloak.py` | `authbridge/demos/webhook/` | Webhook-injected deployments (parameterized namespace/SA, creates realm, auth-target client, agent-spiffe-aud + auth-target-aud scopes, alice user) |
+| `setup_keycloak.py` | `authbridge/demos/single-target/` | Single-target SPIFFE demo (creates realm, auth-target client, agent-spiffe-aud + auth-target-aud scopes, alice user) |
+| `setup_keycloak.py` | `authbridge/demos/github-issue/` | GitHub issue integration demo (creates github-tool client, github-tool-aud + github-full-access scopes, alice + bob users) |
+| `setup_keycloak.py` | `authbridge/authproxy/quickstart/` | Standalone AuthProxy quickstart without SPIFFE (creates application-caller, authproxy, demoapp clients with per-client scope assignment) |
 
 **Common Keycloak defaults across all scripts:**
 - URL: `http://keycloak.localtest.me:8080`
@@ -212,7 +212,7 @@ Sidecars communicate through files on shared volumes:
 ### AuthProxy (standalone quickstart, no webhook)
 
 ```bash
-cd AuthBridge/AuthProxy
+cd authbridge/authproxy
 
 # Build all images (auth-proxy, demo-app, proxy-init, envoy-with-processor)
 make build-images
@@ -231,7 +231,7 @@ make undeploy
 
 ```bash
 # 1. Setup Keycloak (requires port-forward to Keycloak)
-cd AuthBridge/demos/webhook
+cd authbridge/demos/webhook
 pip install -r ../../requirements.txt
 python setup_keycloak.py            # Creates realm, auth-target client, scopes, alice user
 
@@ -260,7 +260,7 @@ kubectl apply -f k8s/auth-target-deployment-webhook.yaml     # Target service
 ## Code Conventions
 
 ### Go (AuthProxy, go-processor, demo-app)
-- Go 1.24 (module: `github.com/kagenti/kagenti-extensions/AuthBridge/AuthProxy`)
+- Go 1.24 (module: `github.com/kagenti/kagenti-extensions/authbridge/authproxy`)
 - Logging with `log.Printf` (stdlib), prefixed by `[Config]`, `[Token Exchange]`, `[Inbound]`, `[JWT Debug]`
 - Thread-safe config via `sync.RWMutex` in the `Config` struct
 - gRPC ext-proc using `envoyproxy/go-control-plane` types
@@ -322,7 +322,7 @@ kubectl apply -f k8s/auth-target-deployment-webhook.yaml     # Target service
 
 4. **TLS passthrough is one-way**: Outbound HTTPS traffic passes through Envoy without token exchange via the TLS passthrough filter chain. Only plaintext HTTP outbound traffic reaches the ext_proc. With the default outbound policy of `"passthrough"`, even plaintext HTTP traffic is forwarded unchanged unless it matches an explicit route in `authproxy-routes`.
 
-5. **Virtualenv directory**: For local development you may create `AuthProxy/quickstart/venv/`, but it should be gitignored and is not committed to the repo.
+5. **Virtualenv directory**: For local development you may create `authproxy/quickstart/venv/`, but it should be gitignored and is not committed to the repo.
 
 6. **Demo SPIFFE ID is hardcoded**: `demos/single-target/setup_keycloak.py` hardcodes `AGENT_SPIFFE_ID = "spiffe://localtest.me/ns/authbridge/sa/agent"`. Change this if using a different namespace/SA.
 

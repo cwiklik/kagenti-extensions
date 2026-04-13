@@ -37,7 +37,7 @@ pre-commit install
 cd kagenti-webhook && make build && make test
 
 # Build AuthProxy images
-cd AuthBridge/AuthProxy && make build-images
+cd authbridge/authproxy && make build-images
 ```
 
 ## Issues

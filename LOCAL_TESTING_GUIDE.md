@@ -451,9 +451,9 @@ kubectl delete namespace agent1
 
 For testing the complete AuthBridge flow with automatic sidecar injection:
 
-**Manual Demo:** Follow [AuthBridge/demos/github-issue/demo-manual.md](AuthBridge/demos/github-issue/demo-manual.md)
+**Manual Demo:** Follow [authbridge/demos/github-issue/demo-manual.md](authbridge/demos/github-issue/demo-manual.md)
 
-**Webhook Demo:** Follow [AuthBridge/demos/webhook/README.md](AuthBridge/demos/webhook/README.md)
+**Webhook Demo:** Follow [authbridge/demos/webhook/README.md](authbridge/demos/webhook/README.md)
 
 ---
 

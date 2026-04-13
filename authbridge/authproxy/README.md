@@ -131,7 +131,7 @@ The Ext Proc reads token exchange configuration directly from environment variab
 
 > **Note:** `CLIENT_ID` and `CLIENT_SECRET` are preferentially loaded from `/shared/` files (when using dynamic client registration with SPIFFE). If files are not available, environment variables are used as fallback.
 
-> **Note:** Target audience and scopes for outbound token exchange are configured per-route in the `authproxy-routes` ConfigMap, not as global environment variables. See the [AuthBridge CLAUDE.md](../../AuthBridge/CLAUDE.md) for the `authproxy-routes` format.
+> **Note:** Target audience and scopes for outbound token exchange are configured per-route in the `authproxy-routes` ConfigMap, not as global environment variables. See the [AuthBridge CLAUDE.md](../../authbridge/CLAUDE.md) for the `authproxy-routes` format.
 
 #### Configuration Secret
 
@@ -190,7 +190,7 @@ This section provides instructions to run the example application with the AuthP
 ### Step 1: Build and Deploy
 
 ```bash
-cd AuthBridge/AuthProxy
+cd authbridge/authproxy
 
 # Build all images
 make build-images

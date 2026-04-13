@@ -408,7 +408,7 @@ kubectl logs deployment/agent -n team1 -c authbridge | grep "Token Exchange"
    - Images are automatically pulled from `ghcr.io/kagenti/kagenti-extensions/`
    - If you need to build locally for development:
      ```bash
-     cd AuthBridge/AuthProxy
+     cd authbridge/authproxy
      make build
      # Load into Kind cluster
      kind load docker-image --name <cluster> localhost/proxy-init:latest

@@ -625,7 +625,7 @@ kubectl delete namespace team1
 
 - **Advanced Demo**: See the [GitHub Issue Agent demo](../github-issue/demo.md) for
   outbound token exchange, scope-based access control, and Alice vs Bob scenarios
-- **AuthProxy Details**: See the [AuthProxy README](../../AuthProxy/README.md) for inbound
+- **AuthProxy Details**: See the [AuthProxy README](../../authproxy/README.md) for inbound
   JWT validation and outbound token exchange internals
 - **Multi-Target Demo**: See the [multi-target demo](../multi-target/demo.md) for
   route-based token exchange to multiple tool services

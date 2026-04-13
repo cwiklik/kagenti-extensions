@@ -13,8 +13,8 @@ lint: ## Run all linters (pre-commit hooks)
 
 fmt: ## Run formatters across all sub-projects
 	cd kagenti-webhook && go fmt ./...
-	cd AuthBridge/AuthProxy && go fmt ./...
-	ruff format AuthBridge/
+	cd authbridge/authproxy && go fmt ./...
+	ruff format authbridge/
 
 pre-commit: ## Install pre-commit hooks (including commit-msg)
 	pre-commit install --hook-type pre-commit --hook-type commit-msg
@@ -31,4 +31,4 @@ build-webhook: ## Build kagenti-webhook binary
 	cd kagenti-webhook && make build
 
 build-images: ## Build AuthProxy Docker images
-	cd AuthBridge/AuthProxy && make build-images
+	cd authbridge/authproxy && make build-images

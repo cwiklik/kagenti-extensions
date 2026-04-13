@@ -24,35 +24,35 @@ jobs:
         image_config:
           # Client Registration - registers workloads with Keycloak using SPIFFE ID
           - name: client-registration
-            context: ./AuthBridge/client-registration
+            context: ./authbridge/client-registration
             dockerfile: Dockerfile
 
           # AuthProxy components - token exchange and traffic interception
           - name: auth-proxy
-            context: ./AuthBridge/AuthProxy
+            context: ./authbridge/authproxy
             dockerfile: Dockerfile
 
           - name: proxy-init
-            context: ./AuthBridge/AuthProxy
+            context: ./authbridge/authproxy
             dockerfile: Dockerfile.init
 
           - name: envoy-with-processor
-            context: ./AuthBridge/AuthProxy
+            context: ./authbridge/authproxy
             dockerfile: Dockerfile.envoy
 
           # SPIFFE Helper - fetches SPIFFE credentials from SPIRE (UBI-based fork)
           - name: spiffe-helper
-            context: ./AuthBridge/spiffe-helper
+            context: ./authbridge/spiffe-helper
             dockerfile: Dockerfile
 
           # Combined AuthBridge sidecar (envoy + go-processor + spiffe-helper + client-registration)
           - name: authbridge
-            context: ./AuthBridge
-            dockerfile: AuthProxy/Dockerfile.authbridge
+            context: ./authbridge
+            dockerfile: authproxy/Dockerfile.authbridge
 
           # Demo application for testing
           - name: demo-app
-            context: ./AuthBridge/AuthProxy/quickstart/demo-app
+            context: ./authbridge/authproxy/quickstart/demo-app
             dockerfile: Dockerfile
 
     steps:

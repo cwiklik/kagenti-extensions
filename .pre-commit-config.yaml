@@ -26,21 +26,21 @@ repos:
     hooks:
       - id: ruff
         args: ['--fix']
-        files: ^AuthBridge/
+        files: ^authbridge/
       - id: ruff-format
-        files: ^AuthBridge/
+        files: ^authbridge/
 
   - repo: local
     hooks:
       - id: go-fmt-authproxy
         name: go-fmt (AuthProxy)
-        entry: bash -c 'cd AuthBridge/AuthProxy && go fmt ./...'
+        entry: bash -c 'cd authbridge/authproxy && go fmt ./...'
         language: system
-        files: ^AuthBridge/AuthProxy/.*\.go$
+        files: ^authbridge/authproxy/.*\.go$
         pass_filenames: false
       - id: go-vet-authproxy
         name: go-vet (AuthProxy)
-        entry: bash -c 'cd AuthBridge/AuthProxy && go vet ./...'
+        entry: bash -c 'cd authbridge/authproxy && go vet ./...'
         language: system
-        files: ^AuthBridge/AuthProxy/.*\.go$
+        files: ^authbridge/authproxy/.*\.go$
         pass_filenames: false
