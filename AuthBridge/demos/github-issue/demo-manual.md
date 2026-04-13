@@ -219,22 +219,15 @@ kind load docker-image --name kagenti ghcr.io/kagenti/agent-examples/git-issue-a
 ## Step 1: Deploy the Webhook with AuthBridge Support
 
 The kagenti-webhook automatically injects AuthBridge sidecars into agent deployments.
-Deploy it with the AuthBridge demo flag:
+
+> **Note:** The kagenti-webhook has been migrated to [kagenti/kagenti-operator](https://github.com/kagenti/kagenti-operator). Deploy the webhook via the operator. See the [operator installation docs](https://github.com/kagenti/kagenti-operator) for details.
+
+Once the webhook is deployed, create the namespace and apply the ConfigMaps:
 
 ```bash
-cd kagenti-webhook
-
-# Deploy webhook + create namespace
-# AUTHBRIDGE_K8S_DIR points at this demo's k8s manifests (default is single-target)
-AUTHBRIDGE_DEMO=true AUTHBRIDGE_NAMESPACE=team1 \
-  AUTHBRIDGE_K8S_DIR=AuthBridge/demos/github-issue/k8s \
-  ./scripts/webhook-rollout.sh
+kubectl create namespace team1
+kubectl apply -f AuthBridge/demos/github-issue/k8s/configmaps-webhook.yaml -n team1
 ```
-
-This automatically:
-1. Builds and deploys the kagenti-webhook
-2. Creates the `team1` namespace
-3. Applies any `configmaps-webhook.yaml` found in the specified k8s directory
 
 > **Note:** If you want to use a different namespace, set `AUTHBRIDGE_NAMESPACE=<your-namespace>` and update all subsequent commands accordingly.
 
@@ -359,7 +352,7 @@ kubectl wait --for=condition=available --timeout=120s deployment/github-tool -n 
 
 ## Step 6: Deploy the GitHub Issue Agent
 
-Deploy the agent with AuthBridge labels. The kagenti-webhook will automatically inject
+Deploy the agent with AuthBridge labels. The webhook will automatically inject
 the AuthBridge sidecars (proxy-init, spiffe-helper, client-registration, envoy-proxy):
 
 ```bash

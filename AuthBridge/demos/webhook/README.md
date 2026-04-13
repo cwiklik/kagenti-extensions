@@ -1,5 +1,7 @@
 # AuthBridge Webhook Demo
 
+> **Note:** The kagenti-webhook has been migrated to [kagenti/kagenti-operator](https://github.com/kagenti/kagenti-operator). The instructions below remain valid when using the operator-deployed webhook.
+
 This guide demonstrates how to use the **kagenti-webhook** to automatically inject AuthBridge sidecars into your deployments for transparent OAuth 2.0 token exchange.
 
 ## Overview

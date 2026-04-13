@@ -2,9 +2,9 @@
 FROM python:3.14-slim
 
 # Create non-root user with UID/GID 1000 (matches spiffe-helper and fsGroup)
-# IMPORTANT: These values MUST match ClientRegistrationUID/GID in
-# kagenti-webhook/internal/webhook/injector/container_builder.go
-# The webhook injects this container with runAsUser/runAsGroup set to those constants.
+# IMPORTANT: These values MUST match the runAsUser/runAsGroup set by the
+# operator's webhook when injecting the client-registration container.
+# See https://github.com/kagenti/kagenti-operator
 RUN groupadd -g 1000 appuser && useradd -u 1000 -g appuser appuser
 
 # Set work directory

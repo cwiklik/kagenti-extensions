@@ -2,7 +2,7 @@
 
 This file provides context for Claude (AI assistant) when working with the `AuthBridge` codebase.
 For the full monorepo context (webhook, CI/CD, Helm, cross-component relationships), see [`../CLAUDE.md`](../CLAUDE.md).
-For the webhook internals, see [`../kagenti-webhook/CLAUDE.md`](../kagenti-webhook/CLAUDE.md).
+For the webhook (now in kagenti-operator), see the [kagenti-operator repo](https://github.com/kagenti/kagenti-operator).
 
 ## What AuthBridge Does
 
@@ -149,7 +149,7 @@ Envoy config lives in `demos/webhook/k8s/configmaps-webhook.yaml` (the `envoy-co
 The `demos/` directory contains five demonstration scenarios (see `demos/README.md` for a recommended learning path):
 
 - **weather-agent/** -- Getting-started demo: inbound JWT validation with outbound passthrough. Simplest way to see AuthBridge in action (UI deployment).
-- **webhook/** -- Shows how to use the kagenti-webhook to automatically inject AuthBridge sidecars. Recommended starting point for webhook-based deployments.
+- **webhook/** -- Shows how to use the webhook (now part of [kagenti-operator](https://github.com/kagenti/kagenti-operator)) to automatically inject AuthBridge sidecars. Recommended starting point for webhook-based deployments.
 - **single-target/** -- Manual deployment demo showing agent → target communication with SPIFFE identity and token exchange.
 - **multi-target/** -- Dynamic scope assignment using `keycloak_sync.py` for agents communicating with multiple targets.
 - **github-issue/** -- External API integration (GitHub) with inbound validation, outbound token exchange, and scope-based access control. Available as UI or manual deployment.
@@ -174,7 +174,7 @@ There are **four** setup scripts for different demo scenarios:
 
 ## Required ConfigMaps for Webhook Injection
 
-When the kagenti-webhook injects sidecars, these ConfigMaps must exist in the target namespace. All required ones are defined in `demos/webhook/k8s/configmaps-webhook.yaml`:
+When the webhook injects sidecars (via [kagenti-operator](https://github.com/kagenti/kagenti-operator)), these ConfigMaps must exist in the target namespace. All required ones are defined in `demos/webhook/k8s/configmaps-webhook.yaml`:
 
 | Resource | Kind | Consumer | Key Fields |
 |----------|------|----------|------------|
@@ -271,7 +271,7 @@ kubectl apply -f k8s/auth-target-deployment-webhook.yaml     # Target service
 - `python-keycloak` library for all Keycloak admin API calls
 - `PyJWT` for JWT decoding (signature verification disabled -- uses `verify_signature: False`)
 - Idempotent: all `get_or_create_*` helper functions check existence before creating
-- UID/GID 1000 in Dockerfile **must match** `ClientRegistrationUID`/`ClientRegistrationGID` in `kagenti-webhook/internal/webhook/injector/container_builder.go`
+- UID/GID 1000 in Dockerfile **must match** the `runAsUser`/`runAsGroup` values set by the operator's webhook when injecting the client-registration container (see [kagenti-operator](https://github.com/kagenti/kagenti-operator))
 
 ### Shell (init-iptables.sh)
 - `set -e` (exit on error)
