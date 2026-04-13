@@ -384,7 +384,7 @@ Wait for the Shipwright build to complete and the deployment to become ready.
 kubectl get pods -n team1
 ```
 
-Expected output depends on how the **kagenti-webhook** feature gate
+Expected output depends on how the **kagenti-operator** feature gate
 [`combinedSidecar`](https://github.com/kagenti/kagenti/blob/main/docs/authbridge-combined-sidecar.md)
 is set (cluster-wide Helm / `kagenti-feature-gates` ConfigMap — not the import UI).
 

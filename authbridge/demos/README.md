@@ -52,7 +52,7 @@ more AuthBridge capabilities.
 - Comprehensive CLI testing and AuthProxy log verification
 
 ### Webhook Demo
-- Demonstrates the **kagenti-webhook** sidecar injection mechanism
+- Demonstrates the [kagenti-operator](https://github.com/kagenti/kagenti-operator) sidecar injection mechanism
 - Deploys a generic agent + auth-target (not a real-world agent)
 - Tests inbound validation and outbound token exchange end-to-end
 - Good for understanding the injection labels and ConfigMap requirements
