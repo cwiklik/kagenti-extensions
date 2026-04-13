@@ -70,7 +70,7 @@ echo ""
 echo "=========================================="
 echo "Building client-registration"
 echo "=========================================="
-cd "${SCRIPT_DIR}/AuthBridge/client-registration"
+cd "${SCRIPT_DIR}/authbridge/client-registration"
 ${CONTAINER_RUNTIME} build -t ghcr.io/kagenti/kagenti-extensions/client-registration:local .
 load_image_to_kind ghcr.io/kagenti/kagenti-extensions/client-registration:local
 echo "✅ Built and loaded: client-registration:local"
@@ -90,7 +90,7 @@ echo ""
 echo "=========================================="
 echo "Building envoy-with-processor"
 echo "=========================================="
-cd "${SCRIPT_DIR}/AuthBridge/AuthProxy"
+cd "${SCRIPT_DIR}/authbridge/authproxy"
 ${CONTAINER_RUNTIME} build -f Dockerfile.envoy -t ghcr.io/kagenti/kagenti-extensions/envoy-with-processor:local .
 load_image_to_kind ghcr.io/kagenti/kagenti-extensions/envoy-with-processor:local
 echo "✅ Built and loaded: envoy-with-processor:local"
@@ -100,7 +100,7 @@ echo ""
 echo "=========================================="
 echo "Building proxy-init"
 echo "=========================================="
-cd "${SCRIPT_DIR}/AuthBridge/AuthProxy"
+cd "${SCRIPT_DIR}/authbridge/authproxy"
 ${CONTAINER_RUNTIME} build -f Dockerfile.init -t ghcr.io/kagenti/kagenti-extensions/proxy-init:local .
 load_image_to_kind ghcr.io/kagenti/kagenti-extensions/proxy-init:local
 echo "✅ Built and loaded: proxy-init:local"

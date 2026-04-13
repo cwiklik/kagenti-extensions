@@ -4,13 +4,13 @@ Kubernetes security extensions for the [Kagenti](https://github.com/kagenti/kage
 
 ## AuthBridge
 
-[AuthBridge](./AuthBridge/) provides end-to-end authentication for Kubernetes workloads with [SPIFFE/SPIRE](https://spiffe.io) integration. It consists of:
+[AuthBridge](./authbridge/) provides end-to-end authentication for Kubernetes workloads with [SPIFFE/SPIRE](https://spiffe.io) integration. It consists of:
 
-- **[AuthProxy](./AuthBridge/AuthProxy/)** — Envoy proxy with a gRPC external processor for inbound JWT validation and outbound OAuth 2.0 token exchange (RFC 8693). Enables secure service-to-service communication by transparently intercepting traffic.
-- **[Client Registration](./AuthBridge/client-registration/)** — Automatically registers Kubernetes workloads as Keycloak OAuth2 clients using their SPIFFE identity, eliminating manual client configuration and static credentials.
-- **[Keycloak Sync](./AuthBridge/keycloak_sync.py)** — Declarative tool for synchronizing Keycloak configuration.
+- **[AuthProxy](./authbridge/authproxy/)** — Envoy proxy with a gRPC external processor for inbound JWT validation and outbound OAuth 2.0 token exchange (RFC 8693). Enables secure service-to-service communication by transparently intercepting traffic.
+- **[Client Registration](./authbridge/client-registration/)** — Automatically registers Kubernetes workloads as Keycloak OAuth2 clients using their SPIFFE identity, eliminating manual client configuration and static credentials.
+- **[Keycloak Sync](./authbridge/keycloak_sync.py)** — Declarative tool for synchronizing Keycloak configuration.
 
-See the [AuthBridge README](./AuthBridge/README.md) for architecture details and the [demos index](./AuthBridge/demos/README.md) for getting started.
+See the [AuthBridge README](./authbridge/README.md) for architecture details and the [demos index](./authbridge/demos/README.md) for getting started.
 
 ## Container Images
 

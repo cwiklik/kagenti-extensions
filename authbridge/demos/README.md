@@ -105,6 +105,6 @@ pip install -r requirements.txt
 ## Related Documentation
 
 - [AuthBridge Overview](../README.md) — Architecture and design
-- [AuthProxy README](../AuthProxy/README.md) — Inbound JWT validation and outbound
+- [AuthProxy README](../authproxy/README.md) — Inbound JWT validation and outbound
   token exchange internals
 - [Kagenti Operator](https://github.com/kagenti/kagenti-operator) — Admission webhook for sidecar injection (migrated from this repo)

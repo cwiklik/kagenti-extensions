@@ -20,8 +20,8 @@ This file provides context for Claude (AI assistant) when working with the `kage
 
 ```
 kagenti-extensions/
-├── AuthBridge/               # Authentication bridge components
-│   ├── AuthProxy/            #   Envoy + ext-proc sidecar (Go) — token validation & exchange
+├── authbridge/               # Authentication bridge components
+│   ├── authproxy/            #   Envoy + ext-proc sidecar (Go) — token validation & exchange
 │   │   ├── go-processor/     #     gRPC ext-proc server (inbound JWT validation, outbound token exchange)
 │   │   └── quickstart/       #     Standalone demo (no SPIFFE)
 │   ├── client-registration/  #   Keycloak auto-registration (Python)
@@ -40,9 +40,9 @@ kagenti-extensions/
 
 An **Envoy proxy with a gRPC external processor** that provides transparent traffic interception for both inbound JWT validation and outbound OAuth 2.0 token exchange (RFC 8693).
 
-**Location:** `AuthBridge/AuthProxy/`
+**Location:** `authbridge/authproxy/`
 **Language:** Go 1.24
-**Detailed guide:** [`AuthBridge/CLAUDE.md`](AuthBridge/CLAUDE.md)
+**Detailed guide:** [`authbridge/CLAUDE.md`](authbridge/CLAUDE.md)
 
 **Core components:**
 - `go-processor/main.go` — gRPC ext-proc server (inbound JWT validation, outbound token exchange)
@@ -55,9 +55,9 @@ An **Envoy proxy with a gRPC external processor** that provides transparent traf
 
 A Python script that **automatically registers Kubernetes workloads as Keycloak OAuth2 clients** using their SPIFFE identity.
 
-**Location:** `AuthBridge/client-registration/`
+**Location:** `authbridge/client-registration/`
 **Language:** Python 3.12
-**Detailed guide:** [`AuthBridge/CLAUDE.md`](AuthBridge/CLAUDE.md)
+**Detailed guide:** [`authbridge/CLAUDE.md`](authbridge/CLAUDE.md)
 
 **Flow:** Reads SPIFFE ID from JWT, registers client in Keycloak, writes secret to `/shared/client-secret.txt`
 
@@ -111,12 +111,12 @@ All images are pushed to `ghcr.io/kagenti/kagenti-extensions/`:
 
 | Image | Source | Description |
 |-------|--------|-------------|
-| `envoy-with-processor` | `AuthBridge/AuthProxy/Dockerfile.envoy` | Envoy 1.28 + go-processor ext-proc |
-| `proxy-init` | `AuthBridge/AuthProxy/Dockerfile.init` | Alpine + iptables init container |
-| `client-registration` | `AuthBridge/client-registration/Dockerfile` | Python Keycloak client registrar |
-| `authbridge` | `AuthBridge/AuthProxy/Dockerfile.authbridge` | Combined sidecar (Envoy + go-processor + spiffe-helper + client-registration) |
-| `auth-proxy` | `AuthBridge/AuthProxy/Dockerfile` | Example pass-through proxy (for demos) |
-| `demo-app` | `AuthBridge/AuthProxy/quickstart/demo-app/Dockerfile` | Demo target service |
+| `envoy-with-processor` | `authbridge/authproxy/Dockerfile.envoy` | Envoy 1.28 + go-processor ext-proc |
+| `proxy-init` | `authbridge/authproxy/Dockerfile.init` | Alpine + iptables init container |
+| `client-registration` | `authbridge/client-registration/Dockerfile` | Python Keycloak client registrar |
+| `authbridge` | `authbridge/authproxy/Dockerfile.authbridge` | Combined sidecar (Envoy + go-processor + spiffe-helper + client-registration) |
+| `auth-proxy` | `authbridge/authproxy/Dockerfile` | Example pass-through proxy (for demos) |
+| `demo-app` | `authbridge/authproxy/quickstart/demo-app/Dockerfile` | Demo target service |
 
 ## Pre-commit Hooks
 
@@ -125,8 +125,8 @@ Install: `pre-commit install`
 Hooks:
 - `trailing-whitespace`, `end-of-file-fixer`, `check-added-large-files` (max 1024KB), `check-yaml`, `check-json`, `check-merge-conflict`, `mixed-line-ending`
 - `ai-assisted-by-trailer` — Rewrites `Co-Authored-By` to `Assisted-By` (commit-msg stage)
-- `ruff`, `ruff-format` — Python linting/formatting on `AuthBridge/` files
-- `go-fmt`, `go-vet` — Runs on `AuthBridge/AuthProxy/` Go files
+- `ruff`, `ruff-format` — Python linting/formatting on `authbridge/` files
+- `go-fmt`, `go-vet` — Runs on `authbridge/authproxy/` Go files
 
 ## Languages and Tech Stack
 
@@ -158,7 +158,7 @@ When the operator injects sidecars, the target namespace needs these resources:
 |----------|------|---------|------|
 | `authbridge-config` | ConfigMap | client-registration, envoy-proxy (ext-proc) | `KEYCLOAK_URL`, `KEYCLOAK_REALM`, `PLATFORM_CLIENT_IDS` (optional), `TOKEN_URL` (optional, derived from KEYCLOAK_URL+KEYCLOAK_REALM), `ISSUER` (optional, derived or explicit for split-horizon DNS), `DEFAULT_OUTBOUND_POLICY` (optional, defaults to `passthrough`). Inbound audience validation uses `CLIENT_ID` from `/shared/client-id.txt`. Target audience and scopes are configured per-route in `authproxy-routes`. |
 | `keycloak-admin-secret` | Secret | client-registration | `KEYCLOAK_ADMIN_USERNAME`, `KEYCLOAK_ADMIN_PASSWORD` |
-| `authproxy-routes` | ConfigMap (optional) | envoy-proxy (ext-proc) | `routes.yaml` -- per-host token exchange rules (see AuthBridge/CLAUDE.md for format) |
+| `authproxy-routes` | ConfigMap (optional) | envoy-proxy (ext-proc) | `routes.yaml` -- per-host token exchange rules (see authbridge/CLAUDE.md for format) |
 | `spiffe-helper-config` | ConfigMap | spiffe-helper | SPIFFE helper configuration file |
 | `envoy-config` | ConfigMap | envoy-proxy | Envoy YAML configuration |
 
@@ -170,7 +170,7 @@ When the operator injects sidecars, the target namespace needs these resources:
 
 ```bash
 # AuthProxy images
-cd AuthBridge/AuthProxy && make build-images
+cd authbridge/authproxy && make build-images
 
 # Client registration (no separate build needed, uses Dockerfile directly)
 ```
@@ -179,11 +179,11 @@ cd AuthBridge/AuthProxy && make build-images
 
 1. Set up a Kind cluster with SPIRE + Keycloak (use [Kagenti Ansible installer](https://github.com/kagenti/kagenti/blob/main/docs/install.md))
 2. Deploy the webhook via [kagenti-operator](https://github.com/kagenti/kagenti-operator)
-3. See the [AuthBridge demos index](AuthBridge/demos/README.md) for a recommended learning path:
-   - **Getting started**: `AuthBridge/demos/weather-agent/demo-ui.md` (inbound validation, UI deployment)
-   - **Full flow**: `AuthBridge/demos/github-issue/demo-ui.md` (token exchange + scope-based access)
-   - **Webhook internals**: `AuthBridge/demos/webhook/README.md`
-   - **Manual deployment**: `AuthBridge/demos/single-target/demo.md`
+3. See the [AuthBridge demos index](authbridge/demos/README.md) for a recommended learning path:
+   - **Getting started**: `authbridge/demos/weather-agent/demo-ui.md` (inbound validation, UI deployment)
+   - **Full flow**: `authbridge/demos/github-issue/demo-ui.md` (token exchange + scope-based access)
+   - **Webhook internals**: `authbridge/demos/webhook/README.md`
+   - **Manual deployment**: `authbridge/demos/single-target/demo.md`
 
 ### Adding a New Component Image to CI
 
@@ -202,7 +202,7 @@ cd AuthBridge/AuthProxy && make build-images
 - Dependencies in `requirements.txt` (version-pinned, e.g. `python-keycloak==5.3.1`)
 
 ### Kubernetes Manifests
-- Example deployment YAMLs in `AuthBridge/demos/*/k8s/`
+- Example deployment YAMLs in `authbridge/demos/*/k8s/`
 
 ### Shell Scripts
 - `set -euo pipefail` (strict mode)
@@ -223,9 +223,9 @@ cd AuthBridge/AuthProxy && make build-images
 
 ## Gotchas and Known Issues
 
-1. **One Go module:** The repo has a single Go module at `AuthBridge/AuthProxy/go.mod` (Go 1.24).
+1. **One Go module:** The repo has a single Go module at `authbridge/authproxy/go.mod` (Go 1.24).
 
-2. **Avoid committing venvs:** Virtual environment directories (e.g. `AuthBridge/AuthProxy/quickstart/venv/`) should be gitignored (the repo's `.gitignore` has a `venv` pattern). Do not create and commit new virtual environments under version control.
+2. **Avoid committing venvs:** Virtual environment directories (e.g. `authbridge/authproxy/quickstart/venv/`) should be gitignored (the repo's `.gitignore` has a `venv` pattern). Do not create and commit new virtual environments under version control.
 
 3. **Envoy config not embedded:** The envoy-proxy sidecar mounts `envoy-config` ConfigMap at `/etc/envoy`. This ConfigMap must exist in the target namespace before workloads are created.
 

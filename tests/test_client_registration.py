@@ -1,4 +1,4 @@
-"""Tests for AuthBridge/client-registration/client_registration.py.
+"""Tests for authbridge/client-registration/client_registration.py.
 
 The module has top-level executable code, so we import individual functions
 by loading the module source without executing it as __main__.
@@ -19,7 +19,7 @@ import pytest
 
 MODULE_PATH = (
     Path(__file__).resolve().parents[1]
-    / "AuthBridge"
+    / "authbridge"
     / "client-registration"
     / "client_registration.py"
 )

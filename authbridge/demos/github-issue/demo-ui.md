@@ -1202,7 +1202,7 @@ kubectl delete namespace team1
 ## Next Steps
 
 - **Manual Deployment**: See [demo-manual.md](demo-manual.md) for deploying everything via `kubectl`
-- **AuthProxy Details**: See the [AuthProxy README](../../AuthProxy/README.md) for inbound
+- **AuthProxy Details**: See the [AuthProxy README](../../authproxy/README.md) for inbound
   JWT validation and outbound token exchange internals
 - **Multi-Target Demo**: See the [multi-target demo](../multi-target/demo.md) for
   route-based token exchange to multiple tool services

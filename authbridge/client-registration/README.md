@@ -381,6 +381,6 @@ kubectl logs deployment/my-app -c spiffe-helper
 ## Related Documentation
 
 - [AuthBridge Demo](../README.md) - Complete end-to-end demo
-- [AuthProxy](../AuthProxy/README.md) - Token validation and exchange
+- [AuthProxy](../authproxy/README.md) - Token validation and exchange
 - [SPIFFE/SPIRE Documentation](https://spiffe.io/docs/latest/)
 - [Keycloak Client Registration](https://www.keycloak.org/docs/latest/securing_apps/#_client_registration)

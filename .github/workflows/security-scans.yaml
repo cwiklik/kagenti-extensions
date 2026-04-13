@@ -175,7 +175,7 @@ jobs:
           echo "=== Bandit Python Security Scan ==="
           # Scan AuthBridge Python code and tests
           PYTHON_DIRS=""
-          for dir in AuthBridge/client-registration AuthBridge tests; do
+          for dir in authbridge/client-registration authbridge tests; do
             if [ -d "$dir" ]; then
               PYTHON_DIRS="$PYTHON_DIRS $dir"
             fi
@@ -273,7 +273,7 @@ jobs:
           scan-type: 'config'
           scan-ref: '.'
           severity: 'CRITICAL,HIGH,MEDIUM'
-          skip-dirs: 'AuthBridge/demos,AuthBridge/AuthProxy/quickstart'
+          skip-dirs: 'authbridge/demos,authbridge/authproxy/quickstart'
           exit-code: '0'
           format: 'table'
 

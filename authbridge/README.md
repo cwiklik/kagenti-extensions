@@ -1,6 +1,6 @@
 # AuthBridge
 
-AuthBridge provides **secure, transparent token management** for Kubernetes workloads. It combines automatic [client registration](./client-registration/) with [token exchange](./AuthProxy/) capabilities, enabling zero-trust authentication flows with [SPIFFE/SPIRE](https://spiffe.io) integration.
+AuthBridge provides **secure, transparent token management** for Kubernetes workloads. It combines automatic [client registration](./client-registration/) with [token exchange](./authproxy/) capabilities, enabling zero-trust authentication flows with [SPIFFE/SPIRE](https://spiffe.io) integration.
 
 > **📘 Looking to run the demo?** See the [Single-Target Demo](./demos/single-target/demo.md) or [Multi-Target Demo](./demos/multi-target/demo.md) for step-by-step instructions.
 
@@ -357,7 +357,7 @@ This creates target clients, audience scopes, and assigns scopes to the agent.
 
 ## Component Documentation
 
-- [AuthProxy](AuthProxy/README.md) - Token validation and exchange proxy
+- [AuthProxy](authproxy/README.md) - Token validation and exchange proxy
 - [Client Registration](client-registration/README.md) - Automatic Keycloak client registration with SPIFFE
 
 ## References

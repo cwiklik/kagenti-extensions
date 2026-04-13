@@ -12,8 +12,8 @@ lint: ## Run all linters (pre-commit hooks)
 	pre-commit run --all-files
 
 fmt: ## Run formatters across all sub-projects
-	cd AuthBridge/AuthProxy && go fmt ./...
-	ruff format AuthBridge/
+	cd authbridge/authproxy && go fmt ./...
+	ruff format authbridge/
 
 pre-commit: ## Install pre-commit hooks (including commit-msg)
 	pre-commit install --hook-type pre-commit --hook-type commit-msg
@@ -21,4 +21,4 @@ pre-commit: ## Install pre-commit hooks (including commit-msg)
 ##@ Sub-project Targets
 
 build-images: ## Build AuthProxy Docker images
-	cd AuthBridge/AuthProxy && make build-images
+	cd authbridge/authproxy && make build-images

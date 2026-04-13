@@ -17,7 +17,7 @@ import (
 
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	v3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
-	"github.com/kagenti/kagenti-extensions/AuthBridge/AuthProxy/go-processor/internal/resolver"
+	"github.com/kagenti/kagenti-extensions/authbridge/authproxy/go-processor/internal/resolver"
 )
 
 func TestMatchBypassPath(t *testing.T) {
