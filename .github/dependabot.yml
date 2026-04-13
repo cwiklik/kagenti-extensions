@@ -6,12 +6,6 @@ updates:
     schedule:
       interval: weekly
 
-  # Go - kagenti-webhook
-  - package-ecosystem: gomod
-    directory: /kagenti-webhook
-    schedule:
-      interval: weekly
-
   # Go - AuthProxy
   - package-ecosystem: gomod
     directory: /AuthBridge/AuthProxy
@@ -27,12 +21,6 @@ updates:
   # Python - client-registration
   - package-ecosystem: pip
     directory: /AuthBridge/client-registration
-    schedule:
-      interval: weekly
-
-  # Docker - kagenti-webhook
-  - package-ecosystem: docker
-    directory: /kagenti-webhook
     schedule:
       interval: weekly
 

@@ -6,20 +6,11 @@ repos:
       - id: end-of-file-fixer
       - id: check-added-large-files
         args: ['--maxkb=1024']
-        exclude: ^kagenti-webhook/bin/
       - id: check-yaml
         args: ['--allow-multiple-documents']
-        # Exclude Helm templates as they contain Go template syntax
-        exclude: ^charts/.*/templates/.*\.yaml$
       - id: check-json
       - id: check-merge-conflict
       - id: mixed-line-ending
-
-  - repo: https://github.com/gruntwork-io/pre-commit
-    rev: v0.1.23
-    hooks:
-      - id: helmlint
-        files: ^charts/
 
   # Rewrite AI Co-authored-by trailers to Assisted-By
   - repo: local
@@ -41,24 +32,6 @@ repos:
 
   - repo: local
     hooks:
-      - id: go-fmt-webhook
-        name: go-fmt (webhook)
-        entry: bash -c 'cd kagenti-webhook && go fmt ./...'
-        language: system
-        files: ^kagenti-webhook/.*\.go$
-        pass_filenames: false
-      - id: go-vet-webhook
-        name: go-vet (webhook)
-        entry: bash -c 'cd kagenti-webhook && go vet ./...'
-        language: system
-        files: ^kagenti-webhook/.*\.go$
-        pass_filenames: false
-      - id: go-mod-tidy-webhook
-        name: go-mod-tidy (webhook)
-        entry: bash -c 'cd kagenti-webhook && go mod tidy'
-        language: system
-        files: ^kagenti-webhook/(go\.mod|go\.sum)$
-        pass_filenames: false
       - id: go-fmt-authproxy
         name: go-fmt (AuthProxy)
         entry: bash -c 'cd AuthBridge/AuthProxy && go fmt ./...'

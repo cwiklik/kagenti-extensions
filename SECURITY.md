@@ -40,4 +40,4 @@ This project implements several security controls:
 
 For deployment security configuration, see:
 - [AuthBridge README](AuthBridge/README.md) - Authentication bridge architecture
-- [kagenti-webhook README](kagenti-webhook/README.md) - Admission webhook configuration
+- [kagenti-operator](https://github.com/kagenti/kagenti-operator) - Admission webhook configuration (migrated from this repo)

@@ -18,12 +18,7 @@ go.work.sum
 
 # Build artifacts
 
-# Kubernetes generated files
-kagenti-webhook/config/crd/bases/
-
 # Build artifacts and binaries
-kagenti-webhook/bin/
-kagenti-webhook/dist/
 dist/
 
 # IDE
@@ -41,12 +36,6 @@ Thumbs.db
 *.tmp
 *.bak
 *.orig
-
-# Helm
-*.tgz
-
-# Ko
-.ko/
 
 # venv
 venv
