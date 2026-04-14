@@ -437,6 +437,202 @@ func TestDefaultBypassPaths(t *testing.T) {
 	}
 }
 
+// --- Config loading and utility function tests ---
+
+func TestDeriveJWKSURL(t *testing.T) {
+	tests := []struct {
+		name     string
+		tokenURL string
+		want     string
+	}{
+		{
+			name:     "standard keycloak token URL",
+			tokenURL: "http://keycloak.svc:8080/realms/kagenti/protocol/openid-connect/token",
+			want:     "http://keycloak.svc:8080/realms/kagenti/protocol/openid-connect/certs",
+		},
+		{
+			name:     "URL without /token suffix",
+			tokenURL: "http://example.com/auth",
+			want:     "http://example.com/auth/certs",
+		},
+		{
+			name:     "empty URL",
+			tokenURL: "",
+			want:     "/certs",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := deriveJWKSURL(tt.tokenURL)
+			if got != tt.want {
+				t.Errorf("deriveJWKSURL(%q) = %q, want %q", tt.tokenURL, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestReadFileContent(t *testing.T) {
+	t.Run("existing file with whitespace", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "test.txt")
+		os.WriteFile(path, []byte("  hello world  \n"), 0644)
+
+		content, err := readFileContent(path)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if content != "hello world" {
+			t.Errorf("expected 'hello world', got %q", content)
+		}
+	})
+
+	t.Run("missing file", func(t *testing.T) {
+		_, err := readFileContent("/nonexistent/path/file.txt")
+		if err == nil {
+			t.Error("expected error for missing file")
+		}
+	})
+
+	t.Run("empty file", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "empty.txt")
+		os.WriteFile(path, []byte(""), 0644)
+
+		content, err := readFileContent(path)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if content != "" {
+			t.Errorf("expected empty string, got %q", content)
+		}
+	})
+}
+
+func TestLoadConfig(t *testing.T) {
+	// Save original config
+	origConfig := getConfig()
+	defer func() {
+		globalConfig.mu.Lock()
+		globalConfig.ClientID = origConfig.ClientID
+		globalConfig.ClientSecret = origConfig.ClientSecret
+		globalConfig.TokenURL = origConfig.TokenURL
+		globalConfig.TargetAudience = origConfig.TargetAudience
+		globalConfig.TargetScopes = origConfig.TargetScopes
+		globalConfig.SpireEnabled = origConfig.SpireEnabled
+		globalConfig.mu.Unlock()
+	}()
+
+	t.Run("loads from env vars when files missing", func(t *testing.T) {
+		// Point file paths to nonexistent locations
+		t.Setenv("CLIENT_ID_FILE", "/nonexistent/client-id.txt")
+		t.Setenv("CLIENT_SECRET_FILE", "/nonexistent/client-secret.txt")
+		t.Setenv("CLIENT_ID", "env-client-id")
+		t.Setenv("CLIENT_SECRET", "env-client-secret")
+		t.Setenv("TOKEN_URL", "http://keycloak/token")
+		t.Setenv("SPIRE_ENABLED", "false")
+
+		loadConfig()
+
+		cfg := getConfig()
+		if cfg.ClientID != "env-client-id" {
+			t.Errorf("expected CLIENT_ID=env-client-id, got %q", cfg.ClientID)
+		}
+		if cfg.ClientSecret != "env-client-secret" {
+			t.Errorf("expected CLIENT_SECRET=env-client-secret, got %q", cfg.ClientSecret)
+		}
+		if cfg.TokenURL != "http://keycloak/token" {
+			t.Errorf("expected TOKEN_URL=http://keycloak/token, got %q", cfg.TokenURL)
+		}
+	})
+
+	t.Run("loads from files when available", func(t *testing.T) {
+		dir := t.TempDir()
+		idPath := filepath.Join(dir, "client-id.txt")
+		secretPath := filepath.Join(dir, "client-secret.txt")
+		os.WriteFile(idPath, []byte("file-client-id\n"), 0644)
+		os.WriteFile(secretPath, []byte("file-client-secret\n"), 0644)
+
+		t.Setenv("CLIENT_ID_FILE", idPath)
+		t.Setenv("CLIENT_SECRET_FILE", secretPath)
+		t.Setenv("CLIENT_ID", "should-be-overridden")
+		t.Setenv("CLIENT_SECRET", "should-be-overridden")
+
+		loadConfig()
+
+		cfg := getConfig()
+		if cfg.ClientID != "file-client-id" {
+			t.Errorf("expected CLIENT_ID=file-client-id (from file), got %q", cfg.ClientID)
+		}
+		if cfg.ClientSecret != "file-client-secret" {
+			t.Errorf("expected CLIENT_SECRET=file-client-secret (from file), got %q", cfg.ClientSecret)
+		}
+	})
+
+	t.Run("spire enabled", func(t *testing.T) {
+		t.Setenv("SPIRE_ENABLED", "true")
+		t.Setenv("CLIENT_ID_FILE", "/nonexistent")
+		t.Setenv("CLIENT_SECRET_FILE", "/nonexistent")
+
+		loadConfig()
+
+		cfg := getConfig()
+		if !cfg.SpireEnabled {
+			t.Error("expected SpireEnabled=true")
+		}
+	})
+}
+
+func TestGetHostFromHeaders(t *testing.T) {
+	tests := []struct {
+		name    string
+		headers []*core.HeaderValue
+		want    string
+	}{
+		{
+			name: "authority header",
+			headers: []*core.HeaderValue{
+				{Key: ":authority", RawValue: []byte("example.com")},
+			},
+			want: "example.com",
+		},
+		{
+			name: "host header fallback",
+			headers: []*core.HeaderValue{
+				{Key: "host", RawValue: []byte("example.com")},
+			},
+			want: "example.com",
+		},
+		{
+			name: "authority preferred over host",
+			headers: []*core.HeaderValue{
+				{Key: ":authority", RawValue: []byte("authority.com")},
+				{Key: "host", RawValue: []byte("host.com")},
+			},
+			want: "authority.com",
+		},
+		{
+			name:    "no host headers",
+			headers: []*core.HeaderValue{},
+			want:    "",
+		},
+		{
+			name: "nil headers",
+			headers: nil,
+			want: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := getHostFromHeaders(tt.headers)
+			if got != tt.want {
+				t.Errorf("getHostFromHeaders() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 // --- Test helpers ---
 
 // buildHeaders creates a core.HeaderMap with the given host and optional Authorization header.
