@@ -984,6 +984,184 @@ func TestHandleInbound_NoAudienceCheck(t *testing.T) {
 	}
 }
 
+// --- Tier 1: SPIFFE federated exchange, malformed bearer, client_credentials error ---
+
+// TestExchangeTokenSPIFFE verifies the SPIFFE federated authentication path
+// where a JWT-SVID is used as client_assertion instead of client_secret.
+func TestExchangeTokenSPIFFE(t *testing.T) {
+	t.Run("spiffe exchange succeeds", func(t *testing.T) {
+		var receivedParams url.Values
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			r.ParseForm()
+			receivedParams = r.Form
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(tokenExchangeResponse{
+				AccessToken: "spiffe-exchanged-token",
+				ExpiresIn:   300,
+			})
+		}))
+		defer server.Close()
+
+		// Write a fake JWT-SVID to a temp file
+		dir := t.TempDir()
+		svidPath := filepath.Join(dir, "jwt_svid.token")
+		if err := os.WriteFile(svidPath, []byte("fake-jwt-svid-content"), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		token, err := exchangeToken("spiffe://localtest.me/ns/team1/sa/agent", "", server.URL,
+			"subject-token", "auth-target", "openid auth-target-aud",
+			true, svidPath, "")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if token != "spiffe-exchanged-token" {
+			t.Errorf("expected spiffe-exchanged-token, got %s", token)
+		}
+
+		// Verify SPIFFE-specific parameters
+		if receivedParams.Get("client_assertion_type") != "urn:ietf:params:oauth:client-assertion-type:jwt-spiffe" {
+			t.Errorf("expected jwt-spiffe assertion type, got %s", receivedParams.Get("client_assertion_type"))
+		}
+		if receivedParams.Get("client_assertion") != "fake-jwt-svid-content" {
+			t.Errorf("expected JWT-SVID as client_assertion, got %s", receivedParams.Get("client_assertion"))
+		}
+		// Should NOT have client_secret
+		if receivedParams.Get("client_secret") != "" {
+			t.Error("expected no client_secret when SPIRE is enabled")
+		}
+	})
+
+	t.Run("spiffe exchange fails when svid file missing", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			t.Error("server should not be called when JWT-SVID is unavailable")
+		}))
+		defer server.Close()
+
+		_, err := exchangeToken("spiffe://localtest.me/ns/team1/sa/agent", "", server.URL,
+			"subject-token", "auth-target", "openid",
+			true, "/nonexistent/jwt_svid.token", "")
+		if err == nil {
+			t.Fatal("expected error when JWT-SVID file is missing")
+		}
+		if !strings.Contains(err.Error(), "JWT-SVID unavailable") {
+			t.Errorf("expected 'JWT-SVID unavailable' error, got: %v", err)
+		}
+	})
+
+	t.Run("spiffe exchange fails when svid file empty", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			t.Error("server should not be called when JWT-SVID is empty")
+		}))
+		defer server.Close()
+
+		dir := t.TempDir()
+		svidPath := filepath.Join(dir, "jwt_svid.token")
+		if err := os.WriteFile(svidPath, []byte(""), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		_, err := exchangeToken("spiffe://localtest.me/ns/team1/sa/agent", "", server.URL,
+			"subject-token", "auth-target", "openid",
+			true, svidPath, "")
+		if err == nil {
+			t.Fatal("expected error when JWT-SVID file is empty")
+		}
+		if !strings.Contains(err.Error(), "JWT-SVID unavailable") {
+			t.Errorf("expected 'JWT-SVID unavailable' error, got: %v", err)
+		}
+	})
+}
+
+// TestOutboundMalformedBearerToken verifies that an outbound request with an
+// Authorization header that doesn't have the "Bearer " prefix gets denied (503).
+func TestOutboundMalformedBearerToken(t *testing.T) {
+	saved := saveGlobals()
+	defer restoreGlobals(saved)
+
+	keycloak := mockKeycloak(t, http.StatusOK, tokenExchangeResponse{
+		AccessToken: "should-not-reach",
+		ExpiresIn:   300,
+	})
+	defer keycloak.Close()
+
+	routesYAML := fmt.Sprintf(`
+- host: "target-service"
+  target_audience: "target-aud"
+  token_scopes: "openid target-aud"
+  token_url: %q
+`, keycloak.URL)
+
+	defaultOutboundPolicy = "passthrough"
+	globalResolver = setupTestResolver(t, routesYAML)
+	setGlobalConfig("test-client", "test-secret", keycloak.URL)
+
+	p := &processor{}
+	// Auth header without "Bearer " prefix — e.g. Basic auth or bare token
+	headers := buildHeaders("target-service", "Basic dXNlcjpwYXNz")
+	resp := p.handleOutbound(context.Background(), headers)
+
+	if !isDenied(resp) {
+		t.Error("expected 503 denial for malformed (non-Bearer) Authorization header on routed host")
+	}
+}
+
+// TestClientCredentialsGrantError verifies that clientCredentialsGrant properly
+// surfaces errors when Keycloak returns a non-200 response.
+func TestClientCredentialsGrantError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(`{"error":"unauthorized_client","error_description":"Invalid client credentials"}`))
+	}))
+	defer server.Close()
+
+	token, _, err := clientCredentialsGrant("bad-client", "bad-secret", server.URL, "target-aud", "openid")
+	if err == nil {
+		t.Fatal("expected error from clientCredentialsGrant with 401 response")
+	}
+	if token != "" {
+		t.Errorf("expected empty token on error, got %q", token)
+	}
+	if !strings.Contains(err.Error(), "unauthorized_client") {
+		t.Errorf("expected error to contain 'unauthorized_client', got: %v", err)
+	}
+}
+
+// TestOutboundClientCredentialsFails verifies that when a routed host has no
+// Authorization header and the client_credentials fallback fails, the proxy
+// returns 503 (not passthrough).
+func TestOutboundClientCredentialsFails(t *testing.T) {
+	saved := saveGlobals()
+	defer restoreGlobals(saved)
+
+	keycloak := mockKeycloak(t, http.StatusBadRequest, map[string]string{
+		"error":             "invalid_client",
+		"error_description": "Bad credentials",
+	})
+	defer keycloak.Close()
+
+	routesYAML := fmt.Sprintf(`
+- host: "target-service"
+  target_audience: "target-aud"
+  token_scopes: "openid"
+  token_url: %q
+`, keycloak.URL)
+
+	defaultOutboundPolicy = "passthrough"
+	globalResolver = setupTestResolver(t, routesYAML)
+	setGlobalConfig("bad-client", "bad-secret", keycloak.URL)
+
+	p := &processor{}
+	// No Authorization header — triggers client_credentials fallback
+	headers := buildHeaders("target-service", "")
+	resp := p.handleOutbound(context.Background(), headers)
+
+	if !isDenied(resp) {
+		t.Error("expected 503 denial when client_credentials grant fails for a routed host")
+	}
+}
+
 // --- Test helpers ---
 
 // buildHeaders creates a core.HeaderMap with the given host and optional Authorization header.
